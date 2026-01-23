@@ -1,12 +1,18 @@
 import { useState, useEffect } from 'react';
 import { 
   Calendar as CalendarIcon, Clock, CheckCircle2, 
-  Search, MessageCircle, AlertTriangle, X, CalendarDays, ListChecks, Edit, Save, RefreshCw, AlertCircle, FileDown
+  Search, MessageCircle, AlertTriangle, X, ListChecks, Edit, Save, RefreshCw, AlertCircle, FileDown, Paperclip
 } from 'lucide-react';
 import { format, parseISO, isToday, isTomorrow, addDays, subDays } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { supabase } from '../lib/supabase';
 import { Toast } from '../components/ui/Toast';
+
+// Definição do Tipo do Anexo
+type Anexo = {
+  nome: string;
+  url: string;
+};
 
 type Agendamento = {
   id: number;
@@ -16,24 +22,21 @@ type Agendamento = {
   telefone_paciente: string;
   diagnostico: string;
   status: string;
-  anexo_url: string | null; // TIPO ATUALIZADO
+  anexos: Anexo[] | null; // Agora é uma lista de objetos
   medico_id: number | null;
 };
 
-// ... (Resto das definições de Tipos e Estados mantém igual)
 type ModalView = 'details' | 'edit' | 'reschedule' | 'confirm_conclude' | 'confirm_cancel';
 
 export function Agenda() {
   const [agendamentos, setAgendamentos] = useState<Agendamento[]>([]);
   const [loading, setLoading] = useState(true);
   
-  // Filtros
   const [busca, setBusca] = useState('');
   const [filtroStatus, setFiltroStatus] = useState('agendado'); 
   const [dataInicio, setDataInicio] = useState(format(subDays(new Date(), 30), 'yyyy-MM-dd')); 
   const [dataFim, setDataFim] = useState(format(addDays(new Date(), 30), 'yyyy-MM-dd')); 
   
-  // Controle de Modal
   const [selectedAgendamento, setSelectedAgendamento] = useState<Agendamento | null>(null);
   const [viewMode, setViewMode] = useState<ModalView>('details');
   const [showToast, setShowToast] = useState({ visible: false, message: '' });
@@ -41,7 +44,6 @@ export function Agenda() {
   const [reagendarForm, setReagendarForm] = useState({ novaData: '', novaHora: '', motivo: '' });
   const [editForm, setEditForm] = useState({ nome: '', telefone: '', diagnostico: '' });
 
-  // BUSCAR
   const fetchAgendamentos = async () => {
     setLoading(true);
     try {
@@ -62,7 +64,6 @@ export function Agenda() {
 
   useEffect(() => { fetchAgendamentos(); }, [dataInicio, dataFim]);
 
-  // FILTRO
   const agendamentosFiltrados = agendamentos.filter(ag => {
     const termo = busca.toLowerCase();
     const matchTexto = ag.nome_paciente?.toLowerCase().includes(termo) || ag.telefone_paciente?.includes(termo) || false;
@@ -76,7 +77,6 @@ export function Agenda() {
     return acc;
   }, {} as Record<string, Agendamento[]>);
 
-  // AÇÕES
   const handlePhoneEditChange = (valor: string) => {
     let value = valor.replace(/\D/g, "").substring(0, 11);
     if (value.length > 10) value = value.replace(/^(\d{2})(\d{5})(\d{4})/, "($1) $2-$3");
@@ -146,7 +146,7 @@ export function Agenda() {
   const limparFiltros = () => {
     setDataInicio(format(subDays(new Date(), 30), 'yyyy-MM-dd'));
     setDataFim(format(addDays(new Date(), 30), 'yyyy-MM-dd'));
-    setFiltroStatus('');
+    setFiltroStatus('agendado');
     setBusca('');
   };
 
@@ -195,8 +195,13 @@ export function Agenda() {
                       </div>
                       <h3 className="font-bold text-gray-800 truncate">{item.nome_paciente}</h3>
                       <p className="text-xs text-gray-400 flex items-center gap-1 mt-2"><MessageCircle size={10} /> {item.telefone_paciente}</p>
-                      {/* Indicador visual se tiver anexo */}
-                      {item.anexo_url && <div className="mt-2 flex gap-1 items-center text-[10px] text-blue-600 font-medium bg-blue-50 px-2 py-0.5 rounded-full w-fit"><FileDown size={10} /> Anexo</div>}
+                      
+                      {/* Badge com contagem de anexos */}
+                      {item.anexos && Array.isArray(item.anexos) && item.anexos.length > 0 && (
+                        <div className="mt-2 flex gap-1 items-center text-[10px] text-blue-600 font-medium bg-blue-50 px-2 py-0.5 rounded-full w-fit">
+                            <Paperclip size={10} /> {item.anexos.length} {item.anexos.length === 1 ? 'Anexo' : 'Anexos'}
+                        </div>
+                      )}
                     </div>
                   </div>
                 ))}
@@ -237,11 +242,26 @@ export function Agenda() {
                     <div className="flex-1 bg-blue-50 p-2 rounded-xl border border-blue-100"><span className="text-xs text-blue-600 font-bold">HORA</span><div className="font-bold text-blue-900">{selectedAgendamento.hora_agendamento}</div></div>
                   </div>
                   
-                  {/* BOTÃO DE DOWNLOAD DO ANEXO */}
-                  {selectedAgendamento.anexo_url && (
-                    <a href={selectedAgendamento.anexo_url} target="_blank" rel="noopener noreferrer" className="flex items-center justify-center gap-2 w-full border-2 border-dashed border-blue-200 bg-blue-50 text-blue-700 py-3 rounded-xl font-bold hover:bg-blue-100 transition-colors">
-                      <FileDown size={20} /> Baixar Anexo / Exame
-                    </a>
+                  {/* LISTA DE DOWNLOAD DE ANEXOS */}
+                  {selectedAgendamento.anexos && Array.isArray(selectedAgendamento.anexos) && selectedAgendamento.anexos.length > 0 && (
+                    <div className="space-y-2">
+                        <p className="text-xs font-bold text-slate-400 uppercase">Anexos ({selectedAgendamento.anexos.length})</p>
+                        {selectedAgendamento.anexos.map((anexo, idx) => (
+                            <a 
+                                key={idx} 
+                                href={anexo.url} 
+                                target="_blank" 
+                                rel="noopener noreferrer" 
+                                className="flex items-center justify-between p-3 bg-blue-50 border border-blue-100 rounded-xl text-blue-700 hover:bg-blue-100 transition-colors group"
+                            >
+                                <div className="flex items-center gap-2 overflow-hidden">
+                                    <FileDown size={18} className="flex-shrink-0" />
+                                    <span className="text-sm font-semibold truncate">{anexo.nome}</span>
+                                </div>
+                                <span className="text-xs bg-white px-2 py-1 rounded text-blue-500 font-medium group-hover:text-blue-700">Baixar</span>
+                            </a>
+                        ))}
+                    </div>
                   )}
 
                   <button onClick={() => window.open(`https://wa.me/55${selectedAgendamento.telefone_paciente.replace(/\D/g, '')}`, '_blank')} className="w-full bg-green-500 hover:bg-green-600 text-white py-3 rounded-xl font-bold flex justify-center gap-2 transition-transform active:scale-95 shadow-sm">
@@ -265,7 +285,7 @@ export function Agenda() {
                 </div>
               )}
 
-              {/* OUTRAS VIEWS (EDIT, RESCHEDULE, CONFIRMS) */}
+              {/* OUTRAS TELAS (Edit, Reschedule, Confirms) SEM ALTERAÇÃO */}
               {viewMode === 'edit' && (
                 <div className="space-y-4 animate-in slide-in-from-right-4 duration-300">
                    <div><label className="text-sm font-medium text-gray-700 mb-1 block">Nome do Paciente</label><input type="text" className="w-full h-11 border border-gray-200 bg-gray-50 rounded-xl px-3 outline-none focus:bg-white focus:ring-2 focus:ring-blue-100 transition-all" value={editForm.nome} onChange={e => setEditForm({...editForm, nome: e.target.value})} /></div>

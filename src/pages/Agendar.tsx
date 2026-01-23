@@ -1,5 +1,5 @@
 import { useState, FormEvent } from 'react';
-import { Calendar, Clock, User, Phone, FileText, Upload, Paperclip } from 'lucide-react';
+import { Calendar, Clock, User, Phone, FileText, Upload, Paperclip, X, Trash2 } from 'lucide-react';
 import { Button } from '../components/ui/Button';
 import { Input } from '../components/ui/Input';
 import { Textarea } from '../components/ui/Textarea';
@@ -16,7 +16,9 @@ export function Agendar() {
     diagnostico: '',
   });
 
-  const [arquivo, setArquivo] = useState<File | null>(null); // Estado para o arquivo
+  // AGORA É UM ARRAY DE ARQUIVOS
+  const [arquivos, setArquivos] = useState<File[]>([]);
+  
   const [loading, setLoading] = useState(false);
   const [showToast, setShowToast] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -37,34 +39,45 @@ export function Agendar() {
     if (errors[name]) setErrors(prev => ({ ...prev, [name]: '' }));
   };
 
-  // Função para lidar com a seleção do arquivo
+  // --- LÓGICA DE MÚLTIPLOS ARQUIVOS ---
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files && e.target.files[0]) {
-      setArquivo(e.target.files[0]);
+    if (e.target.files) {
+      const novosArquivos = Array.from(e.target.files);
+      const total = arquivos.length + novosArquivos.length;
+
+      if (total > 5) {
+        alert("Máximo de 5 arquivos permitidos.");
+        return;
+      }
+      
+      setArquivos(prev => [...prev, ...novosArquivos]);
     }
   };
 
-  const uploadArquivo = async (file: File) => {
+  const removerArquivo = (index: number) => {
+    setArquivos(prev => prev.filter((_, i) => i !== index));
+  };
+
+  // Função que sobe UM arquivo e retorna o objeto { nome, url }
+  const uploadArquivoUnico = async (file: File) => {
     const fileExt = file.name.split('.').pop();
-    const fileName = `${Date.now()}.${fileExt}`; // Nome único para não sobrescrever
-    const filePath = `${fileName}`;
+    const fileName = `${Date.now()}_${Math.random().toString(36).substring(7)}.${fileExt}`;
+    
+    const { error } = await supabase.storage.from('anexos').upload(fileName, file);
+    if (error) throw error;
 
-    const { error: uploadError } = await supabase.storage
-      .from('anexos')
-      .upload(filePath, file);
-
-    if (uploadError) throw uploadError;
-
-    // Pega a URL pública para salvar no banco
-    const { data } = supabase.storage.from('anexos').getPublicUrl(filePath);
-    return data.publicUrl;
+    const { data } = supabase.storage.from('anexos').getPublicUrl(fileName);
+    
+    return {
+      nome: file.name, // Nome original para mostrar na tela depois
+      url: data.publicUrl
+    };
   };
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
     setLoading(true);
     
-    // Validações
     const novosErros: Record<string, string> = {};
     if (!formData.data_agendamento) novosErros.data_agendamento = 'Data obrigatória';
     if (!formData.hora_agendamento) novosErros.hora_agendamento = 'Hora obrigatória';
@@ -78,14 +91,15 @@ export function Agendar() {
     }
 
     try {
-      let anexoUrl = null;
-
-      // 1. Se tiver arquivo, faz upload primeiro
-      if (arquivo) {
-        anexoUrl = await uploadArquivo(arquivo);
+      // 1. Faz upload de todos os arquivos em paralelo
+      const listaAnexos = [];
+      if (arquivos.length > 0) {
+        // Promise.all espera todos os uploads terminarem
+        const uploads = await Promise.all(arquivos.map(file => uploadArquivoUnico(file)));
+        listaAnexos.push(...uploads);
       }
 
-      // 2. Salva no banco com a URL do anexo
+      // 2. Salva no banco (agora mandamos o JSON completo)
       const { error } = await supabase.from('agendamentos').insert([{
         data_agendamento: formData.data_agendamento,
         hora_agendamento: formData.hora_agendamento,
@@ -93,14 +107,14 @@ export function Agendar() {
         telefone_paciente: formData.telefone_paciente,
         diagnostico: formData.diagnostico,
         status: 'agendado',
-        anexo_url: anexoUrl // Campo novo
+        anexos: listaAnexos // Coluna nova JSONB
       }]);
       
       if (error) throw error;
       
       setShowToast(true);
       setFormData({ data_agendamento: '', hora_agendamento: '', nome_paciente: '', telefone_paciente: '', diagnostico: '' });
-      setArquivo(null); // Limpa o arquivo
+      setArquivos([]); // Limpa lista
     } catch (error: any) {
       alert('Erro: ' + error.message);
     } finally {
@@ -112,7 +126,7 @@ export function Agendar() {
     <div className="max-w-4xl mx-auto animate-in fade-in duration-500">
       <div className="mb-8">
         <h1 className="text-3xl font-bold text-gray-800 mb-2">Novo Agendamento</h1>
-        <p className="text-gray-600">Preencha os dados e anexe exames se necessário</p>
+        <p className="text-gray-600">Preencha os dados e anexe até 5 exames</p>
       </div>
 
       <Card>
@@ -141,34 +155,49 @@ export function Agendar() {
           <Input label="Telefone / WhatsApp" name="telefone_paciente" value={formData.telefone_paciente} onChange={handlePhoneChange} required placeholder="(xx) xxxxx-xxxx" maxLength={15} icon={<Phone size={20} />} error={errors.telefone_paciente} />
           <Textarea label="Diagnóstico / Motivo" name="diagnostico" value={formData.diagnostico} onChange={handleChange} rows={3} icon={<FileText size={20} />} />
 
-          {/* CAMPO DE UPLOAD MODERNO */}
+          {/* ÁREA DE UPLOAD MÚLTIPLO */}
           <div className="w-full">
-            <label className="text-sm font-semibold text-slate-700 mb-1.5 block">Anexo (Exame/Documento)</label>
-            <div className="border-2 border-dashed border-slate-300 rounded-xl bg-slate-50 p-4 hover:bg-white hover:border-blue-400 transition-colors cursor-pointer relative">
+            <label className="text-sm font-semibold text-slate-700 mb-1.5 block">Anexos (Máx: 5)</label>
+            
+            <div className="border-2 border-dashed border-slate-300 rounded-xl bg-slate-50 p-6 hover:bg-white hover:border-blue-400 transition-colors relative text-center">
                <input 
                   type="file" 
+                  multiple // PERMITE VÁRIOS
                   onChange={handleFileChange} 
                   className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
-                  accept=".pdf,image/*" // Aceita PDF e Imagens
+                  accept=".pdf,image/*" 
                />
-               <div className="flex items-center justify-center gap-2 text-slate-500">
-                  {arquivo ? (
-                    <>
-                      <Paperclip className="text-blue-600" size={20} />
-                      <span className="text-blue-600 font-medium">{arquivo.name}</span>
-                    </>
-                  ) : (
-                    <>
-                      <Upload size={20} />
-                      <span>Clique para anexar um arquivo</span>
-                    </>
-                  )}
+               <div className="flex flex-col items-center justify-center gap-2 text-slate-500">
+                  <Upload size={32} className="text-blue-400" />
+                  <p className="text-sm font-medium">Clique ou arraste arquivos aqui</p>
+                  <p className="text-xs text-slate-400">PDF ou Imagens</p>
                </div>
             </div>
+
+            {/* LISTA DE ARQUIVOS SELECIONADOS */}
+            {arquivos.length > 0 && (
+              <div className="mt-3 space-y-2">
+                {arquivos.map((arq, index) => (
+                  <div key={index} className="flex items-center justify-between p-3 bg-white border border-slate-200 rounded-lg shadow-sm animate-in fade-in slide-in-from-top-1">
+                    <div className="flex items-center gap-2 overflow-hidden">
+                      <Paperclip size={16} className="text-blue-600 flex-shrink-0" />
+                      <span className="text-sm text-slate-700 truncate">{arq.name}</span>
+                    </div>
+                    <button 
+                      type="button" 
+                      onClick={() => removerArquivo(index)}
+                      className="p-1 hover:bg-red-50 text-slate-400 hover:text-red-500 rounded transition-colors"
+                    >
+                      <Trash2 size={16} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
 
           <Button type="submit" disabled={loading} fullWidth>
-            {loading ? 'Enviando...' : 'Salvar Agendamento'}
+            {loading ? 'Salvando...' : 'Salvar Agendamento'}
           </Button>
         </form>
       </Card>

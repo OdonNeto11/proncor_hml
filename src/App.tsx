@@ -6,11 +6,11 @@ import { Agenda } from './pages/Agenda';
 
 function App() {
   return (
-    // O BrowserRouter já está no main.tsx, então aqui usamos apenas Routes
     <Layout>
       <Routes>
         <Route path="/" element={<Home />} />
-        <Route path="/agendar" element={<Agendar />} />
+        {/* AQUI ESTAVA O ERRO: Mudamos de /agendar para /novo para bater com o menu */}
+        <Route path="/novo" element={<Agendar />} /> 
         <Route path="/agenda" element={<Agenda />} />
       </Routes>
     </Layout>

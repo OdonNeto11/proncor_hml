@@ -1,13 +1,13 @@
 import { Calendar, ClipboardList, ArrowRight } from 'lucide-react';
 import { Card } from '../components/ui/Card';
-import { useNavigate } from 'react-router-dom'; // <--- Mudança aqui
+import { useNavigate } from 'react-router-dom';
 
 export function Home() {
-  const navigate = useNavigate(); // <--- Hook padrão do React Router
+  const navigate = useNavigate();
 
   return (
-    <div className="max-w-6xl mx-auto">
-      <div className="text-center mb-12">
+    <div className="max-w-6xl mx-auto py-10">
+      <div className="text-center mb-16">
         <h1 className="text-4xl md:text-5xl font-bold text-gray-800 mb-4">
           Sistema de Agendamento Médico
         </h1>
@@ -18,10 +18,10 @@ export function Home() {
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-8 max-w-4xl mx-auto">
         <Card
-          onClick={() => navigate('/agendar')}
-          className="cursor-pointer group hover:shadow-lg transition-shadow"
+          onClick={() => navigate('/novo')}
+          className="cursor-pointer group hover:shadow-lg transition-shadow border-t-4 border-t-blue-500"
         >
-          <div className="flex flex-col items-center text-center p-6">
+          <div className="flex flex-col items-center text-center p-8">
             <div className="bg-blue-100 p-6 rounded-full mb-6 group-hover:bg-blue-200 transition-colors">
               <Calendar className="text-blue-600" size={48} />
             </div>
@@ -40,9 +40,9 @@ export function Home() {
 
         <Card
           onClick={() => navigate('/agenda')}
-          className="cursor-pointer group hover:shadow-lg transition-shadow"
+          className="cursor-pointer group hover:shadow-lg transition-shadow border-t-4 border-t-green-500"
         >
-          <div className="flex flex-col items-center text-center p-6">
+          <div className="flex flex-col items-center text-center p-8">
             <div className="bg-green-100 p-6 rounded-full mb-6 group-hover:bg-green-200 transition-colors">
               <ClipboardList className="text-green-600" size={48} />
             </div>
@@ -61,7 +61,7 @@ export function Home() {
       </div>
 
       <div className="mt-16 text-center">
-        <Card className="bg-gradient-to-r from-blue-50 to-blue-100">
+        <Card className="bg-gradient-to-r from-blue-50 to-blue-100 border-none">
           <div className="p-6">
             <h3 className="text-lg font-semibold text-gray-800 mb-2">
               Sistema de Teleconsulta e Retornos

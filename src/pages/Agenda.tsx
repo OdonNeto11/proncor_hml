@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { 
   Calendar as CalendarIcon, Clock, CheckCircle2, 
-  Search, MessageCircle, AlertTriangle, X, CalendarDays, ListChecks, Edit, Save, RefreshCw, AlertCircle
+  Search, MessageCircle, AlertTriangle, X, CalendarDays, ListChecks, Edit, Save, RefreshCw, AlertCircle, FileDown
 } from 'lucide-react';
 import { format, parseISO, isToday, isTomorrow, addDays, subDays } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
@@ -16,10 +16,11 @@ type Agendamento = {
   telefone_paciente: string;
   diagnostico: string;
   status: string;
+  anexo_url: string | null; // TIPO ATUALIZADO
   medico_id: number | null;
 };
 
-// Modos de visualização do Modal
+// ... (Resto das definições de Tipos e Estados mantém igual)
 type ModalView = 'details' | 'edit' | 'reschedule' | 'confirm_conclude' | 'confirm_cancel';
 
 export function Agenda() {
@@ -37,11 +38,10 @@ export function Agenda() {
   const [viewMode, setViewMode] = useState<ModalView>('details');
   const [showToast, setShowToast] = useState({ visible: false, message: '' });
 
-  // Formulários
   const [reagendarForm, setReagendarForm] = useState({ novaData: '', novaHora: '', motivo: '' });
   const [editForm, setEditForm] = useState({ nome: '', telefone: '', diagnostico: '' });
 
-  // BUSCAR DADOS
+  // BUSCAR
   const fetchAgendamentos = async () => {
     setLoading(true);
     try {
@@ -57,16 +57,12 @@ export function Agenda() {
       if (error) throw error;
       if (data) setAgendamentos(data as any);
       
-    } catch (error) {
-      console.error('Erro ao buscar agenda:', error);
-    } finally {
-      setLoading(false);
-    }
+    } catch (error) { console.error('Erro:', error); } finally { setLoading(false); }
   };
 
   useEffect(() => { fetchAgendamentos(); }, [dataInicio, dataFim]);
 
-  // FILTRAGEM FRONTEND
+  // FILTRO
   const agendamentosFiltrados = agendamentos.filter(ag => {
     const termo = busca.toLowerCase();
     const matchTexto = ag.nome_paciente?.toLowerCase().includes(termo) || ag.telefone_paciente?.includes(termo) || false;
@@ -80,7 +76,7 @@ export function Agenda() {
     return acc;
   }, {} as Record<string, Agendamento[]>);
 
-  // MÁSCARA DE TELEFONE (Para edição)
+  // AÇÕES
   const handlePhoneEditChange = (valor: string) => {
     let value = valor.replace(/\D/g, "").substring(0, 11);
     if (value.length > 10) value = value.replace(/^(\d{2})(\d{5})(\d{4})/, "($1) $2-$3");
@@ -90,12 +86,11 @@ export function Agenda() {
     setEditForm(prev => ({ ...prev, telefone: value }));
   };
 
-  // AÇÕES
   const executarAtualizacaoStatus = async (id: number, novoStatus: string) => {
     try {
         const { error } = await supabase.from('agendamentos').update({ status: novoStatus }).eq('id', id);
         if (error) throw error;
-        setShowToast({ visible: true, message: `Status atualizado para: ${novoStatus}` });
+        setShowToast({ visible: true, message: `Status atualizado!` });
         setSelectedAgendamento(null);
         fetchAgendamentos();
     } catch (e) { alert('Erro ao atualizar status'); }
@@ -106,16 +101,14 @@ export function Agenda() {
     try {
       const novoDiagnostico = (selectedAgendamento?.diagnostico || '') + 
         `\n[Reagendado em ${format(new Date(), 'dd/MM')}]: ${reagendarForm.motivo}`;
-
       const { error } = await supabase.from('agendamentos').update({
         data_agendamento: reagendarForm.novaData,
         hora_agendamento: reagendarForm.novaHora,
         diagnostico: novoDiagnostico,
         status: 'agendado'
       }).eq('id', selectedAgendamento!.id);
-
       if (error) throw error;
-      setShowToast({ visible: true, message: 'Reagendado com sucesso!' });
+      setShowToast({ visible: true, message: 'Reagendado!' });
       setSelectedAgendamento(null);
       fetchAgendamentos();
     } catch (error) { alert("Erro ao reagendar"); }
@@ -129,11 +122,9 @@ export function Agenda() {
             telefone_paciente: editForm.telefone,
             diagnostico: editForm.diagnostico
         }).eq('id', selectedAgendamento.id);
-        
         if (error) throw error;
         setShowToast({ visible: true, message: 'Dados atualizados!' });
-        
-        setSelectedAgendamento({...selectedAgendamento, nome_paciente: editForm.nome, telefone_paciente: editForm.telefone, diagnostico: editForm.diagnostico});
+        setSelectedAgendamento({...selectedAgendamento, ...editForm});
         setViewMode('details');
         fetchAgendamentos();
      } catch (e) { alert('Erro ao editar'); }
@@ -162,7 +153,7 @@ export function Agenda() {
   return (
     <div className="max-w-6xl mx-auto animate-in fade-in duration-500 pb-20">
       
-      {/* Header e Filtros */}
+      {/* Header */}
       <div className="bg-white p-6 rounded-xl border border-gray-100 shadow-sm mb-8">
         <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 gap-4">
           <div><h1 className="text-2xl font-bold text-gray-800">Agenda de Consultas</h1><p className="text-gray-500 text-sm">Gerencie os atendimentos</p></div>
@@ -204,6 +195,8 @@ export function Agenda() {
                       </div>
                       <h3 className="font-bold text-gray-800 truncate">{item.nome_paciente}</h3>
                       <p className="text-xs text-gray-400 flex items-center gap-1 mt-2"><MessageCircle size={10} /> {item.telefone_paciente}</p>
+                      {/* Indicador visual se tiver anexo */}
+                      {item.anexo_url && <div className="mt-2 flex gap-1 items-center text-[10px] text-blue-600 font-medium bg-blue-50 px-2 py-0.5 rounded-full w-fit"><FileDown size={10} /> Anexo</div>}
                     </div>
                   </div>
                 ))}
@@ -227,13 +220,7 @@ export function Agenda() {
                   <div className="flex items-center gap-2">
                     <h3 className="text-lg font-bold text-gray-800 line-clamp-1">{selectedAgendamento.nome_paciente}</h3>
                     {selectedAgendamento.status?.toLowerCase() !== 'realizado' && (
-                      <button 
-                        onClick={() => setViewMode('edit')} 
-                        title="Editar dados"
-                        className="p-1.5 bg-gray-100 text-gray-500 hover:bg-blue-100 hover:text-blue-600 rounded-lg transition-colors"
-                      >
-                        <Edit size={18} />
-                      </button>
+                      <button onClick={() => setViewMode('edit')} title="Editar dados" className="p-1.5 bg-gray-100 text-gray-500 hover:bg-blue-100 hover:text-blue-600 rounded-lg transition-colors"><Edit size={18} /></button>
                     )}
                   </div>
                 }
@@ -243,7 +230,6 @@ export function Agenda() {
 
             <div className="p-6">
               
-              {/* DETAILS */}
               {viewMode === 'details' && (
                 <div className="space-y-5">
                   <div className="flex gap-3 text-center">
@@ -251,6 +237,13 @@ export function Agenda() {
                     <div className="flex-1 bg-blue-50 p-2 rounded-xl border border-blue-100"><span className="text-xs text-blue-600 font-bold">HORA</span><div className="font-bold text-blue-900">{selectedAgendamento.hora_agendamento}</div></div>
                   </div>
                   
+                  {/* BOTÃO DE DOWNLOAD DO ANEXO */}
+                  {selectedAgendamento.anexo_url && (
+                    <a href={selectedAgendamento.anexo_url} target="_blank" rel="noopener noreferrer" className="flex items-center justify-center gap-2 w-full border-2 border-dashed border-blue-200 bg-blue-50 text-blue-700 py-3 rounded-xl font-bold hover:bg-blue-100 transition-colors">
+                      <FileDown size={20} /> Baixar Anexo / Exame
+                    </a>
+                  )}
+
                   <button onClick={() => window.open(`https://wa.me/55${selectedAgendamento.telefone_paciente.replace(/\D/g, '')}`, '_blank')} className="w-full bg-green-500 hover:bg-green-600 text-white py-3 rounded-xl font-bold flex justify-center gap-2 transition-transform active:scale-95 shadow-sm">
                     <MessageCircle /> WhatsApp
                   </button>
@@ -272,7 +265,7 @@ export function Agenda() {
                 </div>
               )}
 
-              {/* EDIT */}
+              {/* OUTRAS VIEWS (EDIT, RESCHEDULE, CONFIRMS) */}
               {viewMode === 'edit' && (
                 <div className="space-y-4 animate-in slide-in-from-right-4 duration-300">
                    <div><label className="text-sm font-medium text-gray-700 mb-1 block">Nome do Paciente</label><input type="text" className="w-full h-11 border border-gray-200 bg-gray-50 rounded-xl px-3 outline-none focus:bg-white focus:ring-2 focus:ring-blue-100 transition-all" value={editForm.nome} onChange={e => setEditForm({...editForm, nome: e.target.value})} /></div>
@@ -282,51 +275,31 @@ export function Agenda() {
                 </div>
               )}
 
-              {/* REAGENDAR */}
               {viewMode === 'reschedule' && (
                  <div className="space-y-5 animate-in slide-in-from-right-4 duration-300">
                     <div className="bg-orange-50 p-4 rounded-xl border border-orange-100 mb-2"><p className="text-sm text-orange-800 text-center font-medium">Selecione a nova data e horário</p></div>
-                    <div>
-                        <label className="text-xs font-bold text-gray-500 uppercase mb-1 block ml-1">Nova Data</label>
-                        <div className="relative">
-                            <CalendarIcon className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={20} />
-                            <input type="date" className="w-full h-12 pl-10 pr-3 border border-gray-200 bg-gray-50 rounded-xl outline-none focus:bg-white focus:ring-2 focus:ring-orange-100 focus:border-orange-300 transition-all text-gray-700" value={reagendarForm.novaData} onChange={e => setReagendarForm({...reagendarForm, novaData: e.target.value})} />
-                        </div>
-                    </div>
-                    <div>
-                        <label className="text-xs font-bold text-gray-500 uppercase mb-1 block ml-1">Novo Horário</label>
-                        <div className="relative">
-                            <Clock className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={20} />
-                            <input type="time" className="w-full h-12 pl-10 pr-3 border border-gray-200 bg-gray-50 rounded-xl outline-none focus:bg-white focus:ring-2 focus:ring-orange-100 focus:border-orange-300 transition-all text-gray-700" value={reagendarForm.novaHora} onChange={e => setReagendarForm({...reagendarForm, novaHora: e.target.value})} />
-                        </div>
-                    </div>
+                    <div><label className="text-xs font-bold text-gray-500 uppercase mb-1 block ml-1">Nova Data</label><div className="relative"><CalendarIcon className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={20} /><input type="date" className="w-full h-12 pl-10 pr-3 border border-gray-200 bg-gray-50 rounded-xl outline-none focus:bg-white focus:ring-2 focus:ring-orange-100 focus:border-orange-300 transition-all text-gray-700" value={reagendarForm.novaData} onChange={e => setReagendarForm({...reagendarForm, novaData: e.target.value})} /></div></div>
+                    <div><label className="text-xs font-bold text-gray-500 uppercase mb-1 block ml-1">Novo Horário</label><div className="relative"><Clock className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={20} /><input type="time" className="w-full h-12 pl-10 pr-3 border border-gray-200 bg-gray-50 rounded-xl outline-none focus:bg-white focus:ring-2 focus:ring-orange-100 focus:border-orange-300 transition-all text-gray-700" value={reagendarForm.novaHora} onChange={e => setReagendarForm({...reagendarForm, novaHora: e.target.value})} /></div></div>
                     <div><label className="text-xs font-bold text-gray-500 uppercase mb-1 block ml-1">Motivo</label><textarea className="w-full border border-gray-200 bg-gray-50 rounded-xl p-3 outline-none focus:bg-white focus:ring-2 focus:ring-orange-100 focus:border-orange-300 transition-all text-sm" rows={2} value={reagendarForm.motivo} onChange={e => setReagendarForm({...reagendarForm, motivo: e.target.value})} /></div>
                     <div className="flex gap-2 pt-2"><button onClick={() => setViewMode('details')} className="flex-1 bg-gray-100 text-gray-600 py-3 rounded-xl text-sm font-medium">Voltar</button><button onClick={confirmarReagendamento} className="flex-1 bg-orange-600 text-white py-3 rounded-xl text-sm hover:bg-orange-700 font-medium">Confirmar</button></div>
                  </div>
               )}
 
-              {/* CONFIRM CANCEL */}
-              {viewMode === 'confirm_cancel' && (
+              {(viewMode === 'confirm_cancel' || viewMode === 'confirm_conclude') && (
                 <div className="text-center space-y-4 animate-in zoom-in-95 duration-200">
-                  <div className="w-16 h-16 bg-red-100 rounded-full flex items-center justify-center mx-auto text-red-600"><AlertCircle size={32} /></div>
-                  <h3 className="text-xl font-bold text-gray-800">Tem certeza?</h3>
-                  <p className="text-gray-500 text-sm">Você está prestes a cancelar este agendamento.</p>
-                  <div className="flex gap-3 pt-2">
-                    <button onClick={() => setViewMode('details')} className="flex-1 bg-gray-100 text-gray-700 py-3 rounded-xl font-semibold hover:bg-gray-200">Voltar</button>
-                    <button onClick={() => executarAtualizacaoStatus(selectedAgendamento.id, 'cancelado')} className="flex-1 bg-red-600 text-white py-3 rounded-xl font-semibold hover:bg-red-700">Sim, Cancelar</button>
+                  <div className={`w-16 h-16 rounded-full flex items-center justify-center mx-auto ${viewMode === 'confirm_cancel' ? 'bg-red-100 text-red-600' : 'bg-green-100 text-green-600'}`}>
+                    {viewMode === 'confirm_cancel' ? <AlertCircle size={32} /> : <CheckCircle2 size={32} />}
                   </div>
-                </div>
-              )}
-
-              {/* CONFIRM CONCLUDE */}
-              {viewMode === 'confirm_conclude' && (
-                <div className="text-center space-y-4 animate-in zoom-in-95 duration-200">
-                  <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto text-green-600"><CheckCircle2 size={32} /></div>
-                  <h3 className="text-xl font-bold text-gray-800">Finalizar Atendimento?</h3>
-                  <p className="text-gray-500 text-sm">O status será alterado para "Realizado".</p>
+                  <h3 className="text-xl font-bold text-gray-800">{viewMode === 'confirm_cancel' ? 'Tem certeza?' : 'Finalizar Atendimento?'}</h3>
+                  <p className="text-gray-500 text-sm">{viewMode === 'confirm_cancel' ? 'Você está prestes a cancelar este agendamento.' : 'O status será alterado para "Realizado".'}</p>
                   <div className="flex gap-3 pt-2">
                     <button onClick={() => setViewMode('details')} className="flex-1 bg-gray-100 text-gray-700 py-3 rounded-xl font-semibold hover:bg-gray-200">Voltar</button>
-                    <button onClick={() => executarAtualizacaoStatus(selectedAgendamento.id, 'realizado')} className="flex-1 bg-green-600 text-white py-3 rounded-xl font-semibold hover:bg-green-700">Confirmar</button>
+                    <button 
+                        onClick={() => executarAtualizacaoStatus(selectedAgendamento.id, viewMode === 'confirm_cancel' ? 'cancelado' : 'realizado')} 
+                        className={`flex-1 text-white py-3 rounded-xl font-semibold ${viewMode === 'confirm_cancel' ? 'bg-red-600 hover:bg-red-700' : 'bg-green-600 hover:bg-green-700'}`}
+                    >
+                        {viewMode === 'confirm_cancel' ? 'Sim, Cancelar' : 'Confirmar'}
+                    </button>
                   </div>
                 </div>
               )}

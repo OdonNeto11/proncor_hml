@@ -2,19 +2,108 @@
 @tailwind components;
 @tailwind utilities;
 
-@layer utilities {
-  @keyframes slideIn {
-    from {
-      transform: translateX(100%);
-      opacity: 0;
-    }
-    to {
-      transform: translateX(0);
-      opacity: 1;
-    }
-  }
+/* --- CUSTOMIZAÇÃO DO DATEPICKER --- */
+.react-datepicker-wrapper {
+  width: 100%;
+}
 
-  .animate-slideIn {
-    animation: slideIn 0.3s ease-out;
-  }
+/* Aumentei o z-index para ficar acima do cabeçalho */
+.react-datepicker-popper {
+  z-index: 9999 !important;
+}
+
+.react-datepicker {
+  font-family: inherit !important;
+  border: 1px solid #e2e8f0 !important;
+  border-radius: 0.75rem !important;
+  box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1) !important;
+  overflow: hidden;
+  font-size: 0.9rem !important;
+  background-color: white !important;
+}
+
+.react-datepicker__header {
+  background-color: #f8fafc !important;
+  border-bottom: 1px solid #e2e8f0 !important;
+  padding-top: 10px !important;
+}
+
+.react-datepicker__current-month {
+  color: #1e293b !important;
+  font-weight: 700 !important;
+  text-transform: capitalize;
+  margin-bottom: 5px !important;
+}
+
+.react-datepicker__day-name {
+  color: #64748b !important;
+  width: 2rem !important;
+  line-height: 2rem !important;
+  margin: 0.2rem !important;
+}
+
+.react-datepicker__day {
+  width: 2rem !important;
+  line-height: 2rem !important;
+  margin: 0.2rem !important;
+  border-radius: 0.5rem !important;
+}
+
+/* Dia Selecionado (Normal) */
+.react-datepicker__day--selected, 
+.react-datepicker__day--keyboard-selected {
+  background-color: #2563eb !important; /* Azul forte (blue-600) */
+  color: white !important;
+  font-weight: bold !important;
+}
+
+/* Dia Selecionado (Ao passar o mouse) */
+.react-datepicker__day--selected:hover,
+.react-datepicker__day--keyboard-selected:hover {
+  background-color: #1d4ed8 !important; /* Azul mais escuro (blue-700) */
+  color: white !important;
+}
+
+/* --- CORREÇÃO PEDIDA: Dia Comum (Ao passar o mouse) --- */
+.react-datepicker__day:hover {
+  background-color: #dbeafe !important; /* Azul um pouco mais escuro (blue-100) antes era (blue-50) */
+  color: #1e293b !important; /* Texto escuro */
+  font-weight: bold !important; /* Negrito ao passar o mouse */
+}
+
+/* Estilo do Input do DatePicker */
+.custom-datepicker-input {
+  width: 100%;
+  height: 3rem;
+  padding-left: 2.5rem;
+  padding-right: 0.75rem;
+  border-radius: 0.75rem;
+  border: 1px solid #e2e8f0;
+  background-color: #f8fafc;
+  outline: none;
+  transition: all 0.2s;
+  color: #334155;
+}
+
+.custom-datepicker-input:focus {
+  background-color: white;
+  border-color: #60a5fa;
+  box-shadow: 0 0 0 2px #dbeafe;
+}
+
+/* Lista de Horários */
+.react-datepicker__time-container .react-datepicker__time .react-datepicker__time-box ul.react-datepicker__time-list li.react-datepicker__time-list-item--selected {
+  background-color: #2563eb !important;
+  font-weight: bold !important;
+}
+
+/* Ajuste fino para horários hover */
+.react-datepicker__time-container .react-datepicker__time .react-datepicker__time-box ul.react-datepicker__time-list li.react-datepicker__time-list-item--selected:hover {
+  background-color: #1d4ed8 !important;
+}
+
+/* Horário comum hover */
+.react-datepicker__time-container .react-datepicker__time .react-datepicker__time-box ul.react-datepicker__time-list li.react-datepicker__time-list-item:hover {
+  background-color: #dbeafe !important;
+  font-weight: bold !important;
 }

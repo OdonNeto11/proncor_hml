@@ -3,10 +3,14 @@ import {
   Calendar as CalendarIcon, Clock, CheckCircle2, 
   Search, MessageCircle, AlertTriangle, X, ListChecks, Edit, Save, RefreshCw, AlertCircle, FileDown, Paperclip
 } from 'lucide-react';
-import { format, parseISO, isToday, isTomorrow, addDays, subDays } from 'date-fns';
+import { format, parseISO, isToday, isTomorrow, isSameDay, endOfMonth, addDays, subDays } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
+import DatePicker, { registerLocale } from 'react-datepicker'; 
+import "react-datepicker/dist/react-datepicker.css"; 
 import { supabase } from '../lib/supabase';
 import { Toast } from '../components/ui/Toast';
+
+registerLocale('pt-BR', ptBR); 
 
 type Anexo = { nome: string; url: string; };
 
@@ -28,35 +32,49 @@ export function Agenda() {
   const [agendamentos, setAgendamentos] = useState<Agendamento[]>([]);
   const [loading, setLoading] = useState(true);
   
-  // Filtros
   const [busca, setBusca] = useState('');
   const [filtroStatus, setFiltroStatus] = useState('agendado'); 
-  const [dataInicio, setDataInicio] = useState(format(subDays(new Date(), 30), 'yyyy-MM-dd')); 
-  const [dataFim, setDataFim] = useState(format(addDays(new Date(), 30), 'yyyy-MM-dd')); 
   
-  // Controle de Modal e Estados
+  const [dataInicio, setDataInicio] = useState<Date | null>(new Date()); 
+  const [dataFim, setDataFim] = useState<Date | null>(endOfMonth(new Date())); 
+  
   const [selectedAgendamento, setSelectedAgendamento] = useState<Agendamento | null>(null);
   const [viewMode, setViewMode] = useState<ModalView>('details');
   const [showToast, setShowToast] = useState({ visible: false, message: '' });
 
-  // Formulários
-  const [reagendarForm, setReagendarForm] = useState({ novaData: '', novaHora: '', motivo: '' });
-  const [reagendarErrors, setReagendarErrors] = useState({ novaData: '', novaHora: '' });
+  const [reagendarDate, setReagendarDate] = useState<Date | null>(null);
+  const [reagendarTime, setReagendarTime] = useState<Date | null>(null);
+  const [reagendarMotivo, setReagendarMotivo] = useState('');
   
   const [editForm, setEditForm] = useState({ nome: '', telefone: '', diagnostico: '' });
 
-  // --- BUSCA DE DADOS ---
+  // --- FUNÇÕES ---
+  const filterPassedTime = (time: Date) => {
+    const currentDate = new Date();
+    const selectedDateToCheck = new Date(time);
+    if (reagendarDate && isSameDay(reagendarDate, currentDate)) {
+      return selectedDateToCheck > currentDate;
+    }
+    return true;
+  };
+
   const fetchAgendamentos = async () => {
     setLoading(true);
     try {
-      const { data, error } = await supabase
+      const inicioStr = dataInicio ? format(dataInicio, 'yyyy-MM-dd') : '';
+      const fimStr = dataFim ? format(dataFim, 'yyyy-MM-dd') : '';
+
+      let query = supabase
         .from('agendamentos')
         .select('*') 
-        .neq('status', 'cancelado') 
-        .gte('data_agendamento', dataInicio)
-        .lte('data_agendamento', dataFim)
+        .neq('status', 'cancelado')
         .order('data_agendamento', { ascending: true })
         .order('hora_agendamento', { ascending: true });
+
+      if (inicioStr) query = query.gte('data_agendamento', inicioStr);
+      if (fimStr) query = query.lte('data_agendamento', fimStr);
+
+      const { data, error } = await query;
 
       if (error) throw error;
       if (data) setAgendamentos(data as any);
@@ -66,24 +84,15 @@ export function Agenda() {
 
   useEffect(() => { fetchAgendamentos(); }, [dataInicio, dataFim]);
 
-  // --- LÓGICA DE FILTRO INTELIGENTE (NOME + TELEFONE) ---
   const agendamentosFiltrados = agendamentos.filter(ag => {
     const termo = busca.toLowerCase();
-    
-    // 1. Busca pelo Nome
     const matchNome = ag.nome_paciente?.toLowerCase().includes(termo);
-
-    // 2. Busca pelo Telefone (Remove formatação para comparar apenas números)
-    // Ex: Se o banco tem "(11) 99999-8888" e busco "1199999", agora encontra.
     const telefoneLimpoBanco = ag.telefone_paciente?.replace(/\D/g, '') || '';
     const termoLimpoBusca = termo.replace(/\D/g, '');
     const matchTelefone = ag.telefone_paciente?.includes(termo) || (termoLimpoBusca.length > 0 && telefoneLimpoBanco.includes(termoLimpoBusca));
-
     const matchTexto = matchNome || matchTelefone;
-
     const statusBanco = ag.status?.toLowerCase() || 'agendado';
     const matchStatus = filtroStatus ? statusBanco === filtroStatus.toLowerCase() : true;
-    
     return matchTexto && matchStatus;
   });
 
@@ -92,7 +101,6 @@ export function Agenda() {
     return acc;
   }, {} as Record<string, Agendamento[]>);
 
-  // --- HANDLERS E VALIDAÇÕES ---
   const handlePhoneEditChange = (valor: string) => {
     let value = valor.replace(/\D/g, "").substring(0, 11);
     if (value.length > 10) value = value.replace(/^(\d{2})(\d{5})(\d{4})/, "($1) $2-$3");
@@ -100,38 +108,6 @@ export function Agenda() {
     else if (value.length > 2) value = value.replace(/^(\d{2})(\d{0,5})/, "($1) $2");
     else if (value.length > 0) value = value.replace(/^(\d*)/, "($1");
     setEditForm(prev => ({ ...prev, telefone: value }));
-  };
-
-  const validarCamposReagendamento = (data: string, hora: string) => {
-    const erros = { novaData: '', novaHora: '' };
-    const agora = new Date();
-    const hojeStr = agora.toISOString().split('T')[0];
-
-    if (!data) {
-    } else if (data < hojeStr) {
-        erros.novaData = "Data retroativa não permitida.";
-    }
-
-    if (data === hojeStr && hora) {
-        const [h, m] = hora.split(':').map(Number);
-        if (h < agora.getHours() || (h === agora.getHours() && m < agora.getMinutes())) {
-            erros.novaHora = "Horário já passou.";
-        }
-    }
-    return erros;
-  };
-
-  const handleReagendarInput = (campo: 'novaData' | 'novaHora' | 'motivo', valor: string) => {
-    const novoForm = { ...reagendarForm, [campo]: valor };
-    setReagendarForm(novoForm);
-
-    if (campo === 'novaData' || campo === 'novaHora') {
-        const errosAtuais = validarCamposReagendamento(
-            campo === 'novaData' ? valor : novoForm.novaData,
-            campo === 'novaHora' ? valor : novoForm.novaHora
-        );
-        setReagendarErrors(errosAtuais);
-    }
   };
 
   const executarAtualizacaoStatus = async (id: number, novoStatus: string) => {
@@ -145,22 +121,17 @@ export function Agenda() {
   };
 
   const confirmarReagendamento = async () => {
-    let erros = validarCamposReagendamento(reagendarForm.novaData, reagendarForm.novaHora);
-    if (!reagendarForm.novaData) erros.novaData = "Data obrigatória.";
-    if (!reagendarForm.novaHora) erros.novaHora = "Hora obrigatória.";
-
-    if (erros.novaData || erros.novaHora) {
-        setReagendarErrors(erros);
-        return;
-    }
+    if (!reagendarDate || !reagendarTime) return alert("Preencha data e hora!");
 
     try {
+      const dataStr = format(reagendarDate, 'yyyy-MM-dd');
+      const horaStr = format(reagendarTime, 'HH:mm');
       const novoDiagnostico = (selectedAgendamento?.diagnostico || '') + 
-        `\n[Reagendado em ${format(new Date(), 'dd/MM')}]: ${reagendarForm.motivo || 'Sem motivo informado.'}`;
+        `\n[Reagendado em ${format(new Date(), 'dd/MM')}]: ${reagendarMotivo || 'Sem motivo informado.'}`;
       
       const { error } = await supabase.from('agendamentos').update({
-        data_agendamento: reagendarForm.novaData,
-        hora_agendamento: reagendarForm.novaHora,
+        data_agendamento: dataStr,
+        hora_agendamento: horaStr,
         diagnostico: novoDiagnostico,
         status: 'agendado'
       }).eq('id', selectedAgendamento!.id);
@@ -191,8 +162,9 @@ export function Agenda() {
   const abrirModal = (item: Agendamento) => {
     setSelectedAgendamento(item);
     setViewMode('details');
-    setReagendarForm({ novaData: '', novaHora: '', motivo: '' });
-    setReagendarErrors({ novaData: '', novaHora: '' });
+    setReagendarDate(null);
+    setReagendarTime(null);
+    setReagendarMotivo('');
     setEditForm({ nome: item.nome_paciente, telefone: item.telefone_paciente, diagnostico: item.diagnostico || '' });
   };
 
@@ -203,8 +175,8 @@ export function Agenda() {
   };
 
   const limparFiltros = () => {
-    setDataInicio(format(subDays(new Date(), 30), 'yyyy-MM-dd'));
-    setDataFim(format(addDays(new Date(), 30), 'yyyy-MM-dd'));
+    setDataInicio(new Date()); 
+    setDataFim(endOfMonth(new Date())); 
     setFiltroStatus('agendado');
     setBusca('');
   };
@@ -221,13 +193,44 @@ export function Agenda() {
             <input type="text" placeholder="Buscar por nome ou telefone..." value={busca} onChange={e => setBusca(e.target.value)} className="w-full pl-10 pr-4 py-2 rounded-lg border border-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-500/20 text-sm" />
           </div>
         </div>
+        
+        {/* FILTROS DE DATA */}
         <div className="flex flex-col lg:flex-row gap-4 pt-4 border-t border-gray-50">
           <div className="flex items-center gap-2 lg:w-1/3">
-            <input type="date" value={dataInicio} onChange={e => setDataInicio(e.target.value)} className="flex-1 p-2 rounded-lg border border-gray-200 text-sm" />
+            
+            {/* Data Início */}
+            <div className="relative flex-1">
+                <CalendarIcon className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none z-10" size={16} />
+                <DatePicker
+                    selected={dataInicio}
+                    onChange={(date: Date | null) => setDataInicio(date)}
+                    locale="pt-BR"
+                    dateFormat="dd/MM/yyyy"
+                    placeholderText="Início"
+                    className="custom-datepicker-input !h-10 !text-sm !pl-10" 
+                    onFocus={(e) => e.target.blur()} 
+                />
+            </div>
+            
             <span className="text-gray-400 text-sm">até</span>
-            <input type="date" value={dataFim} onChange={e => setDataFim(e.target.value)} className="flex-1 p-2 rounded-lg border border-gray-200 text-sm" />
+            
+            {/* Data Fim */}
+            <div className="relative flex-1">
+                <CalendarIcon className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none z-10" size={16} />
+                <DatePicker
+                    selected={dataFim}
+                    onChange={(date: Date | null) => setDataFim(date)}
+                    locale="pt-BR"
+                    dateFormat="dd/MM/yyyy"
+                    placeholderText="Fim"
+                    className="custom-datepicker-input !h-10 !text-sm !pl-10"
+                    onFocus={(e) => e.target.blur()} 
+                />
+            </div>
+
           </div>
-          <div className="relative flex-1"><ListChecks className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={16} /><select value={filtroStatus} onChange={e => setFiltroStatus(e.target.value)} className="w-full pl-9 pr-8 py-2 rounded-lg border border-gray-200 text-sm focus:outline-none appearance-none bg-white"><option value="">Todos os Status</option><option value="agendado">A Realizar</option><option value="realizado">Realizados</option></select></div>
+          
+          <div className="relative flex-1"><ListChecks className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={16} /><select value={filtroStatus} onChange={e => setFiltroStatus(e.target.value)} className="w-full pl-9 pr-8 py-2.5 rounded-lg border border-gray-200 text-sm focus:outline-none appearance-none bg-white h-10"><option value="">Todos os Status</option><option value="agendado">A Realizar</option><option value="realizado">Realizados</option></select></div>
         </div>
       </div>
 
@@ -242,7 +245,15 @@ export function Agenda() {
         <div className="space-y-8">
           {Object.entries(grupos).map(([data, itens]) => (
             <div key={data} className="animate-in fade-in slide-in-from-bottom-2 duration-300">
-              <div className="flex items-center gap-3 mb-4 bg-blue-50/50 p-2 rounded-lg w-fit border border-blue-100"><CalendarIcon className="text-blue-600" size={18} /><h2 className="font-bold text-gray-700 capitalize text-sm">{isToday(parseISO(data)) ? 'Hoje' : isTomorrow(parseISO(data)) ? 'Amanhã' : format(parseISO(data), "EEEE, d 'de' MMMM", { locale: ptBR })}</h2></div>
+              
+              {/* --- ALTERAÇÃO: MEIO TERMO (bg-blue-50) --- */}
+              <div className="flex items-center gap-3 mb-4 bg-blue-50 p-2 rounded-lg w-full border border-blue-100 shadow-sm">
+                <CalendarIcon className="text-blue-600" size={18} />
+                <h2 className="font-bold text-gray-800 capitalize text-sm">
+                    {isToday(parseISO(data)) ? 'Hoje' : isTomorrow(parseISO(data)) ? 'Amanhã' : format(parseISO(data), "EEEE, d 'de' MMMM", { locale: ptBR })}
+                </h2>
+              </div>
+
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                 {itens.map((item) => (
                   <div key={item.id} onClick={() => abrirModal(item)} className="bg-white rounded-xl border p-4 shadow-sm hover:shadow-md cursor-pointer relative overflow-hidden group transition-all">
@@ -351,29 +362,38 @@ export function Agenda() {
                     <div>
                         <label className="text-xs font-bold text-gray-500 uppercase mb-1 block ml-1">Nova Data</label>
                         <div className="relative">
-                            <CalendarIcon className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={20} />
-                            <input 
-                                type="date" 
-                                className={`w-full h-12 pl-10 pr-3 border bg-gray-50 rounded-xl outline-none focus:bg-white focus:ring-2 transition-all text-gray-700 ${reagendarErrors.novaData ? 'border-red-500 focus:ring-red-100' : 'border-gray-200 focus:ring-orange-100 focus:border-orange-300'}`}
-                                value={reagendarForm.novaData} 
-                                onChange={e => handleReagendarInput('novaData', e.target.value)} 
+                            <CalendarIcon className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none z-10" size={20} />
+                            <DatePicker
+                                selected={reagendarDate}
+                                onChange={(d: Date | null) => setReagendarDate(d)}
+                                minDate={new Date()} // Reagendamento não permite retroativo
+                                locale="pt-BR"
+                                dateFormat="dd/MM/yyyy"
+                                placeholderText="Selecione o dia"
+                                className="custom-datepicker-input"
+                                onFocus={(e) => e.target.blur()} 
                             />
                         </div>
-                        {reagendarErrors.novaData && <span className="text-xs text-red-500 mt-1 ml-1 font-medium">{reagendarErrors.novaData}</span>}
                     </div>
 
                     <div>
                         <label className="text-xs font-bold text-gray-500 uppercase mb-1 block ml-1">Novo Horário</label>
                         <div className="relative">
-                            <Clock className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={20} />
-                            <input 
-                                type="time" 
-                                className={`w-full h-12 pl-10 pr-3 border bg-gray-50 rounded-xl outline-none focus:bg-white focus:ring-2 transition-all text-gray-700 ${reagendarErrors.novaHora ? 'border-red-500 focus:ring-red-100' : 'border-gray-200 focus:ring-orange-100 focus:border-orange-300'}`}
-                                value={reagendarForm.novaHora} 
-                                onChange={e => handleReagendarInput('novaHora', e.target.value)} 
+                            <Clock className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none z-10" size={20} />
+                            <DatePicker
+                                selected={reagendarTime}
+                                onChange={(t: Date | null) => setReagendarTime(t)}
+                                showTimeSelect
+                                showTimeSelectOnly
+                                timeIntervals={15}
+                                timeCaption="Hora"
+                                dateFormat="HH:mm"
+                                locale="pt-BR"
+                                placeholderText="Selecione a hora"
+                                filterTime={filterPassedTime}
+                                className="custom-datepicker-input"
                             />
                         </div>
-                        {reagendarErrors.novaHora && <span className="text-xs text-red-500 mt-1 ml-1 font-medium">{reagendarErrors.novaHora}</span>}
                     </div>
 
                     <div>
@@ -382,20 +402,14 @@ export function Agenda() {
                             className="w-full border border-gray-200 bg-gray-50 rounded-xl p-3 outline-none focus:bg-white focus:ring-2 focus:ring-orange-100 focus:border-orange-300 transition-all text-sm placeholder:text-gray-400" 
                             rows={2} 
                             placeholder="Ex.: Paciente pediu para remarcar."
-                            value={reagendarForm.motivo} 
-                            onChange={e => handleReagendarInput('motivo', e.target.value)} 
+                            value={reagendarMotivo} 
+                            onChange={e => setReagendarMotivo(e.target.value)} 
                         />
                     </div>
 
                     <div className="flex gap-2 pt-2">
                         <button onClick={() => setViewMode('details')} className="flex-1 bg-gray-100 text-gray-600 py-3 rounded-xl text-sm font-medium">Voltar</button>
-                        <button 
-                            onClick={confirmarReagendamento} 
-                            className="flex-1 bg-orange-600 text-white py-3 rounded-xl text-sm hover:bg-orange-700 font-medium disabled:opacity-50 disabled:cursor-not-allowed"
-                            disabled={!!reagendarErrors.novaData || !!reagendarErrors.novaHora}
-                        >
-                            Confirmar
-                        </button>
+                        <button onClick={confirmarReagendamento} className="flex-1 bg-orange-600 text-white py-3 rounded-xl text-sm hover:bg-orange-700 font-medium">Confirmar</button>
                     </div>
                  </div>
               )}

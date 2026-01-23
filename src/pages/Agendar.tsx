@@ -1,5 +1,10 @@
-import { useState, FormEvent } from 'react';
+import React, { useState, FormEvent } from 'react';
 import { Calendar, Clock, User, Phone, FileText, Upload, Paperclip, Trash2 } from 'lucide-react';
+import DatePicker, { registerLocale } from 'react-datepicker';
+import { ptBR } from 'date-fns/locale';
+import "react-datepicker/dist/react-datepicker.css";
+import { format, isSameDay } from 'date-fns';
+
 import { Button } from '../components/ui/Button';
 import { Input } from '../components/ui/Input';
 import { Textarea } from '../components/ui/Textarea';
@@ -7,10 +12,15 @@ import { Card } from '../components/ui/Card';
 import { Toast } from '../components/ui/Toast';
 import { supabase } from '../lib/supabase';
 
+// Registro do idioma
+registerLocale('pt-BR', ptBR);
+
 export function Agendar() {
+  // Estados para o DatePicker (Tipagem explícita para evitar erro)
+  const [selectedDate, setSelectedDate] = useState<Date | null>(null);
+  const [selectedTime, setSelectedTime] = useState<Date | null>(null);
+
   const [formData, setFormData] = useState({
-    data_agendamento: '',
-    hora_agendamento: '',
     nome_paciente: '',
     telefone_paciente: '',
     diagnostico: '',
@@ -21,29 +31,15 @@ export function Agendar() {
   const [showToast, setShowToast] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
 
-  // --- VALIDAÇÃO DE DATA E HORA RETROATIVA ---
-  const validarDataHora = (data: string, hora: string) => {
-    if (!data) return null;
+  // Filtra horários passados
+  const filterPassedTime = (time: Date) => {
+    const currentDate = new Date();
+    const selectedDateToCheck = new Date(time);
 
-    const agora = new Date();
-    const hojeStr = agora.toISOString().split('T')[0]; // YYYY-MM-DD
-
-    // 1. Valida Data Passada
-    if (data < hojeStr) {
-      return "A data não pode ser anterior a hoje.";
+    if (selectedDate && isSameDay(selectedDate, currentDate)) {
+      return selectedDateToCheck > currentDate;
     }
-
-    // 2. Valida Horário Passado (se for hoje)
-    if (data === hojeStr && hora) {
-      const [horaSel, minSel] = hora.split(':').map(Number);
-      const horaAtual = agora.getHours();
-      const minAtual = agora.getMinutes();
-
-      if (horaSel < horaAtual || (horaSel === horaAtual && minSel < minAtual)) {
-        return "O horário já passou.";
-      }
-    }
-    return null;
+    return true;
   };
 
   const handlePhoneChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -58,27 +54,8 @@ export function Agendar() {
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
     const { name, value } = e.target;
-    const novoForm = { ...formData, [name]: value };
-    setFormData(novoForm);
-
-    // Limpa erro genérico do campo
+    setFormData(prev => ({ ...prev, [name]: value }));
     if (errors[name]) setErrors(prev => ({ ...prev, [name]: '' }));
-
-    // Validação em Tempo Real para Data e Hora
-    if (name === 'data_agendamento' || name === 'hora_agendamento') {
-      const erroDataHora = validarDataHora(
-        name === 'data_agendamento' ? value : formData.data_agendamento,
-        name === 'hora_agendamento' ? value : formData.hora_agendamento
-      );
-
-      if (erroDataHora) {
-        // Define o erro no campo que está sendo alterado (ou na data se for genérico)
-        setErrors(prev => ({ ...prev, [name]: erroDataHora }));
-      } else {
-        // Se corrigiu, limpa os erros de data e hora
-        setErrors(prev => ({ ...prev, data_agendamento: '', hora_agendamento: '' }));
-      }
-    }
   };
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -108,17 +85,11 @@ export function Agendar() {
     setLoading(true);
     
     const novosErros: Record<string, string> = {};
-    if (!formData.data_agendamento) novosErros.data_agendamento = 'Data obrigatória';
-    if (!formData.hora_agendamento) novosErros.hora_agendamento = 'Hora obrigatória';
+    if (!selectedDate) novosErros.data_agendamento = 'Data obrigatória';
+    if (!selectedTime) novosErros.hora_agendamento = 'Hora obrigatória';
     if (!formData.nome_paciente) novosErros.nome_paciente = 'Nome obrigatório';
     if (!formData.telefone_paciente || formData.telefone_paciente.length < 14) novosErros.telefone_paciente = 'Telefone inválido';
     
-    // Validação Final de Retroativo
-    const erroRetroativo = validarDataHora(formData.data_agendamento, formData.hora_agendamento);
-    if (erroRetroativo) {
-        novosErros.data_agendamento = erroRetroativo;
-    }
-
     if (Object.keys(novosErros).length > 0) {
       setErrors(novosErros);
       setLoading(false);
@@ -132,9 +103,12 @@ export function Agendar() {
         listaAnexos.push(...uploads);
       }
 
+      const dataFormatada = selectedDate ? format(selectedDate, 'yyyy-MM-dd') : '';
+      const horaFormatada = selectedTime ? format(selectedTime, 'HH:mm') : '';
+
       const { error } = await supabase.from('agendamentos').insert([{
-        data_agendamento: formData.data_agendamento,
-        hora_agendamento: formData.hora_agendamento,
+        data_agendamento: dataFormatada,
+        hora_agendamento: horaFormatada,
         nome_paciente: formData.nome_paciente,
         telefone_paciente: formData.telefone_paciente,
         diagnostico: formData.diagnostico,
@@ -145,7 +119,9 @@ export function Agendar() {
       if (error) throw error;
       
       setShowToast(true);
-      setFormData({ data_agendamento: '', hora_agendamento: '', nome_paciente: '', telefone_paciente: '', diagnostico: '' });
+      setFormData({ nome_paciente: '', telefone_paciente: '', diagnostico: '' });
+      setSelectedDate(null);
+      setSelectedTime(null);
       setArquivos([]);
     } catch (error: any) {
       alert('Erro: ' + error.message);
@@ -163,21 +139,52 @@ export function Agendar() {
 
       <Card>
         <form onSubmit={handleSubmit} className="space-y-6 p-6">
+          
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            
+            {/* DATA */}
             <div className="w-full">
                 <label className="text-sm font-semibold text-slate-700 mb-1.5 block">Data <span className="text-red-500">*</span></label>
                 <div className="relative">
-                    <div className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none"><Calendar size={20} /></div>
-                    <input type="date" name="data_agendamento" value={formData.data_agendamento} onChange={handleChange} className={`w-full h-12 pl-10 pr-3 rounded-xl border bg-slate-50 text-slate-800 focus:bg-white focus:ring-2 focus:ring-blue-100 outline-none transition-all ${errors.data_agendamento ? 'border-red-500' : 'border-slate-200'}`} />
+                    <div className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none z-10"><Calendar size={20} /></div>
+                    <DatePicker
+                        selected={selectedDate}
+                        onChange={(date: Date | null) => {
+                           setSelectedDate(date);
+                           if(errors.data_agendamento) setErrors({...errors, data_agendamento: ''});
+                        }}
+                        minDate={new Date()}
+                        locale="pt-BR"
+                        dateFormat="dd/MM/yyyy"
+                        placeholderText="Selecione o dia"
+                        className={`custom-datepicker-input ${errors.data_agendamento ? '!border-red-500' : ''}`}
+                        onFocus={(e) => e.target.blur()}
+                    />
                 </div>
                 {errors.data_agendamento && <span className="text-xs text-red-500 mt-1">{errors.data_agendamento}</span>}
             </div>
 
+            {/* HORA */}
             <div className="w-full">
                 <label className="text-sm font-semibold text-slate-700 mb-1.5 block">Horário <span className="text-red-500">*</span></label>
                 <div className="relative">
-                    <div className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none"><Clock size={20} /></div>
-                    <input type="time" name="hora_agendamento" value={formData.hora_agendamento} onChange={handleChange} className={`w-full h-12 pl-10 pr-3 rounded-xl border bg-slate-50 text-slate-800 focus:bg-white focus:ring-2 focus:ring-blue-100 outline-none transition-all ${errors.hora_agendamento ? 'border-red-500' : 'border-slate-200'}`} />
+                    <div className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none z-10"><Clock size={20} /></div>
+                    <DatePicker
+                        selected={selectedTime}
+                        onChange={(time: Date | null) => {
+                            setSelectedTime(time);
+                            if(errors.hora_agendamento) setErrors({...errors, hora_agendamento: ''});
+                        }}
+                        showTimeSelect
+                        showTimeSelectOnly
+                        timeIntervals={15}
+                        timeCaption="Hora"
+                        dateFormat="HH:mm"
+                        locale="pt-BR"
+                        placeholderText="Selecione a hora"
+                        filterTime={filterPassedTime}
+                        className={`custom-datepicker-input ${errors.hora_agendamento ? '!border-red-500' : ''}`}
+                    />
                 </div>
                 {errors.hora_agendamento && <span className="text-xs text-red-500 mt-1">{errors.hora_agendamento}</span>}
             </div>

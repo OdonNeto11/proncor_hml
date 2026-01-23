@@ -9,7 +9,7 @@ export function Home() {
     <div className="max-w-6xl mx-auto py-10">
       <div className="text-center mb-16">
         <h1 className="text-4xl md:text-5xl font-bold text-gray-800 mb-4">
-          Sistema de Agendamento Médico
+          Sistema de Teleconsultas e Retornos
         </h1>
         <p className="text-xl text-gray-600">
           Hospital Proncor - Gestão de Retornos Médicos
@@ -67,7 +67,7 @@ export function Home() {
               Sistema de Teleconsulta e Retornos
             </h3>
             <p className="text-gray-600">
-              Gerencie retornos médicos online após exames de forma centralizada e eficiente
+              Gerencie retornos médicos online após exames de forma centralizada e eficiente.
             </p>
           </div>
         </Card>

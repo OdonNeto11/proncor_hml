@@ -8,11 +8,7 @@ import { ptBR } from 'date-fns/locale';
 import { supabase } from '../lib/supabase';
 import { Toast } from '../components/ui/Toast';
 
-// Definição do Tipo do Anexo
-type Anexo = {
-  nome: string;
-  url: string;
-};
+type Anexo = { nome: string; url: string; };
 
 type Agendamento = {
   id: number;
@@ -22,7 +18,7 @@ type Agendamento = {
   telefone_paciente: string;
   diagnostico: string;
   status: string;
-  anexos: Anexo[] | null; // Agora é uma lista de objetos
+  anexos: Anexo[] | null;
   medico_id: number | null;
 };
 
@@ -32,18 +28,24 @@ export function Agenda() {
   const [agendamentos, setAgendamentos] = useState<Agendamento[]>([]);
   const [loading, setLoading] = useState(true);
   
+  // Filtros
   const [busca, setBusca] = useState('');
   const [filtroStatus, setFiltroStatus] = useState('agendado'); 
   const [dataInicio, setDataInicio] = useState(format(subDays(new Date(), 30), 'yyyy-MM-dd')); 
   const [dataFim, setDataFim] = useState(format(addDays(new Date(), 30), 'yyyy-MM-dd')); 
   
+  // Controle de Modal e Estados
   const [selectedAgendamento, setSelectedAgendamento] = useState<Agendamento | null>(null);
   const [viewMode, setViewMode] = useState<ModalView>('details');
   const [showToast, setShowToast] = useState({ visible: false, message: '' });
 
+  // Formulários
   const [reagendarForm, setReagendarForm] = useState({ novaData: '', novaHora: '', motivo: '' });
+  const [reagendarErrors, setReagendarErrors] = useState({ novaData: '', novaHora: '' }); // NOVO: Erros visuais
+  
   const [editForm, setEditForm] = useState({ nome: '', telefone: '', diagnostico: '' });
 
+  // --- BUSCA DE DADOS ---
   const fetchAgendamentos = async () => {
     setLoading(true);
     try {
@@ -64,6 +66,7 @@ export function Agenda() {
 
   useEffect(() => { fetchAgendamentos(); }, [dataInicio, dataFim]);
 
+  // --- FILTROS ---
   const agendamentosFiltrados = agendamentos.filter(ag => {
     const termo = busca.toLowerCase();
     const matchTexto = ag.nome_paciente?.toLowerCase().includes(termo) || ag.telefone_paciente?.includes(termo) || false;
@@ -77,6 +80,7 @@ export function Agenda() {
     return acc;
   }, {} as Record<string, Agendamento[]>);
 
+  // --- HANDLERS E VALIDAÇÕES ---
   const handlePhoneEditChange = (valor: string) => {
     let value = valor.replace(/\D/g, "").substring(0, 11);
     if (value.length > 10) value = value.replace(/^(\d{2})(\d{5})(\d{4})/, "($1) $2-$3");
@@ -84,6 +88,45 @@ export function Agenda() {
     else if (value.length > 2) value = value.replace(/^(\d{2})(\d{0,5})/, "($1) $2");
     else if (value.length > 0) value = value.replace(/^(\d*)/, "($1");
     setEditForm(prev => ({ ...prev, telefone: value }));
+  };
+
+  // Lógica de validação isolada
+  const validarCamposReagendamento = (data: string, hora: string) => {
+    const erros = { novaData: '', novaHora: '' };
+    const agora = new Date();
+    const hojeStr = agora.toISOString().split('T')[0];
+
+    // Valida Data
+    if (!data) {
+        // Vazio não é erro imediato no onChange, só no submit
+    } else if (data < hojeStr) {
+        erros.novaData = "Data retroativa não permitida.";
+    }
+
+    // Valida Hora (somente se for hoje)
+    if (data === hojeStr && hora) {
+        const [h, m] = hora.split(':').map(Number);
+        if (h < agora.getHours() || (h === agora.getHours() && m < agora.getMinutes())) {
+            erros.novaHora = "Horário já passou.";
+        }
+    }
+    return erros;
+  };
+
+  // Ao alterar input de reagendamento
+  const handleReagendarInput = (campo: 'novaData' | 'novaHora' | 'motivo', valor: string) => {
+    const novoForm = { ...reagendarForm, [campo]: valor };
+    setReagendarForm(novoForm);
+
+    // Se mexeu em data ou hora, valida imediatamente
+    if (campo === 'novaData' || campo === 'novaHora') {
+        const errosAtuais = validarCamposReagendamento(
+            campo === 'novaData' ? valor : novoForm.novaData,
+            campo === 'novaHora' ? valor : novoForm.novaHora
+        );
+        // Atualiza só o erro do campo que mexeu (ou limpa ambos se estiver tudo ok)
+        setReagendarErrors(errosAtuais);
+    }
   };
 
   const executarAtualizacaoStatus = async (id: number, novoStatus: string) => {
@@ -97,21 +140,37 @@ export function Agenda() {
   };
 
   const confirmarReagendamento = async () => {
-    if (!reagendarForm.novaData || !reagendarForm.novaHora) return alert("Preencha data e hora!");
+    // 1. Validação Final antes de enviar
+    let erros = validarCamposReagendamento(reagendarForm.novaData, reagendarForm.novaHora);
+    
+    // Verifica campos vazios
+    if (!reagendarForm.novaData) erros.novaData = "Data obrigatória.";
+    if (!reagendarForm.novaHora) erros.novaHora = "Hora obrigatória.";
+
+    if (erros.novaData || erros.novaHora) {
+        setReagendarErrors(erros);
+        return; // Para aqui e mostra o erro visual
+    }
+
     try {
       const novoDiagnostico = (selectedAgendamento?.diagnostico || '') + 
-        `\n[Reagendado em ${format(new Date(), 'dd/MM')}]: ${reagendarForm.motivo}`;
+        `\n[Reagendado em ${format(new Date(), 'dd/MM')}]: ${reagendarForm.motivo || 'Sem motivo informado.'}`;
+      
       const { error } = await supabase.from('agendamentos').update({
         data_agendamento: reagendarForm.novaData,
         hora_agendamento: reagendarForm.novaHora,
         diagnostico: novoDiagnostico,
         status: 'agendado'
       }).eq('id', selectedAgendamento!.id);
+      
       if (error) throw error;
-      setShowToast({ visible: true, message: 'Reagendado!' });
+      
+      setShowToast({ visible: true, message: 'Reagendado com sucesso!' });
       setSelectedAgendamento(null);
       fetchAgendamentos();
-    } catch (error) { alert("Erro ao reagendar"); }
+    } catch (error) { 
+        alert("Erro ao reagendar, tente novamente."); 
+    }
   };
 
   const confirmarEdicao = async () => {
@@ -134,6 +193,7 @@ export function Agenda() {
     setSelectedAgendamento(item);
     setViewMode('details');
     setReagendarForm({ novaData: '', novaHora: '', motivo: '' });
+    setReagendarErrors({ novaData: '', novaHora: '' }); // Limpa erros anteriores
     setEditForm({ nome: item.nome_paciente, telefone: item.telefone_paciente, diagnostico: item.diagnostico || '' });
   };
 
@@ -195,8 +255,6 @@ export function Agenda() {
                       </div>
                       <h3 className="font-bold text-gray-800 truncate">{item.nome_paciente}</h3>
                       <p className="text-xs text-gray-400 flex items-center gap-1 mt-2"><MessageCircle size={10} /> {item.telefone_paciente}</p>
-                      
-                      {/* Badge com contagem de anexos */}
                       {item.anexos && Array.isArray(item.anexos) && item.anexos.length > 0 && (
                         <div className="mt-2 flex gap-1 items-center text-[10px] text-blue-600 font-medium bg-blue-50 px-2 py-0.5 rounded-full w-fit">
                             <Paperclip size={10} /> {item.anexos.length} {item.anexos.length === 1 ? 'Anexo' : 'Anexos'}
@@ -242,18 +300,11 @@ export function Agenda() {
                     <div className="flex-1 bg-blue-50 p-2 rounded-xl border border-blue-100"><span className="text-xs text-blue-600 font-bold">HORA</span><div className="font-bold text-blue-900">{selectedAgendamento.hora_agendamento}</div></div>
                   </div>
                   
-                  {/* LISTA DE DOWNLOAD DE ANEXOS */}
                   {selectedAgendamento.anexos && Array.isArray(selectedAgendamento.anexos) && selectedAgendamento.anexos.length > 0 && (
                     <div className="space-y-2">
                         <p className="text-xs font-bold text-slate-400 uppercase">Anexos ({selectedAgendamento.anexos.length})</p>
                         {selectedAgendamento.anexos.map((anexo, idx) => (
-                            <a 
-                                key={idx} 
-                                href={anexo.url} 
-                                target="_blank" 
-                                rel="noopener noreferrer" 
-                                className="flex items-center justify-between p-3 bg-blue-50 border border-blue-100 rounded-xl text-blue-700 hover:bg-blue-100 transition-colors group"
-                            >
+                            <a key={idx} href={anexo.url} target="_blank" rel="noopener noreferrer" className="flex items-center justify-between p-3 bg-blue-50 border border-blue-100 rounded-xl text-blue-700 hover:bg-blue-100 transition-colors group">
                                 <div className="flex items-center gap-2 overflow-hidden">
                                     <FileDown size={18} className="flex-shrink-0" />
                                     <span className="text-sm font-semibold truncate">{anexo.nome}</span>
@@ -285,7 +336,6 @@ export function Agenda() {
                 </div>
               )}
 
-              {/* OUTRAS TELAS (Edit, Reschedule, Confirms) SEM ALTERAÇÃO */}
               {viewMode === 'edit' && (
                 <div className="space-y-4 animate-in slide-in-from-right-4 duration-300">
                    <div><label className="text-sm font-medium text-gray-700 mb-1 block">Nome do Paciente</label><input type="text" className="w-full h-11 border border-gray-200 bg-gray-50 rounded-xl px-3 outline-none focus:bg-white focus:ring-2 focus:ring-blue-100 transition-all" value={editForm.nome} onChange={e => setEditForm({...editForm, nome: e.target.value})} /></div>
@@ -295,13 +345,63 @@ export function Agenda() {
                 </div>
               )}
 
+              {/* REAGENDAMENTO (COM VALIDAÇÃO VISUAL) */}
               {viewMode === 'reschedule' && (
                  <div className="space-y-5 animate-in slide-in-from-right-4 duration-300">
                     <div className="bg-orange-50 p-4 rounded-xl border border-orange-100 mb-2"><p className="text-sm text-orange-800 text-center font-medium">Selecione a nova data e horário</p></div>
-                    <div><label className="text-xs font-bold text-gray-500 uppercase mb-1 block ml-1">Nova Data</label><div className="relative"><CalendarIcon className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={20} /><input type="date" className="w-full h-12 pl-10 pr-3 border border-gray-200 bg-gray-50 rounded-xl outline-none focus:bg-white focus:ring-2 focus:ring-orange-100 focus:border-orange-300 transition-all text-gray-700" value={reagendarForm.novaData} onChange={e => setReagendarForm({...reagendarForm, novaData: e.target.value})} /></div></div>
-                    <div><label className="text-xs font-bold text-gray-500 uppercase mb-1 block ml-1">Novo Horário</label><div className="relative"><Clock className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={20} /><input type="time" className="w-full h-12 pl-10 pr-3 border border-gray-200 bg-gray-50 rounded-xl outline-none focus:bg-white focus:ring-2 focus:ring-orange-100 focus:border-orange-300 transition-all text-gray-700" value={reagendarForm.novaHora} onChange={e => setReagendarForm({...reagendarForm, novaHora: e.target.value})} /></div></div>
-                    <div><label className="text-xs font-bold text-gray-500 uppercase mb-1 block ml-1">Motivo</label><textarea className="w-full border border-gray-200 bg-gray-50 rounded-xl p-3 outline-none focus:bg-white focus:ring-2 focus:ring-orange-100 focus:border-orange-300 transition-all text-sm" rows={2} value={reagendarForm.motivo} onChange={e => setReagendarForm({...reagendarForm, motivo: e.target.value})} /></div>
-                    <div className="flex gap-2 pt-2"><button onClick={() => setViewMode('details')} className="flex-1 bg-gray-100 text-gray-600 py-3 rounded-xl text-sm font-medium">Voltar</button><button onClick={confirmarReagendamento} className="flex-1 bg-orange-600 text-white py-3 rounded-xl text-sm hover:bg-orange-700 font-medium">Confirmar</button></div>
+                    
+                    {/* Data */}
+                    <div>
+                        <label className="text-xs font-bold text-gray-500 uppercase mb-1 block ml-1">Nova Data</label>
+                        <div className="relative">
+                            <CalendarIcon className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={20} />
+                            <input 
+                                type="date" 
+                                className={`w-full h-12 pl-10 pr-3 border bg-gray-50 rounded-xl outline-none focus:bg-white focus:ring-2 transition-all text-gray-700 ${reagendarErrors.novaData ? 'border-red-500 focus:ring-red-100' : 'border-gray-200 focus:ring-orange-100 focus:border-orange-300'}`}
+                                value={reagendarForm.novaData} 
+                                onChange={e => handleReagendarInput('novaData', e.target.value)} 
+                            />
+                        </div>
+                        {reagendarErrors.novaData && <span className="text-xs text-red-500 mt-1 ml-1 font-medium">{reagendarErrors.novaData}</span>}
+                    </div>
+
+                    {/* Hora */}
+                    <div>
+                        <label className="text-xs font-bold text-gray-500 uppercase mb-1 block ml-1">Novo Horário</label>
+                        <div className="relative">
+                            <Clock className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={20} />
+                            <input 
+                                type="time" 
+                                className={`w-full h-12 pl-10 pr-3 border bg-gray-50 rounded-xl outline-none focus:bg-white focus:ring-2 transition-all text-gray-700 ${reagendarErrors.novaHora ? 'border-red-500 focus:ring-red-100' : 'border-gray-200 focus:ring-orange-100 focus:border-orange-300'}`}
+                                value={reagendarForm.novaHora} 
+                                onChange={e => handleReagendarInput('novaHora', e.target.value)} 
+                            />
+                        </div>
+                        {reagendarErrors.novaHora && <span className="text-xs text-red-500 mt-1 ml-1 font-medium">{reagendarErrors.novaHora}</span>}
+                    </div>
+
+                    {/* Motivo com Placeholder */}
+                    <div>
+                        <label className="text-xs font-bold text-gray-500 uppercase mb-1 block ml-1">Motivo</label>
+                        <textarea 
+                            className="w-full border border-gray-200 bg-gray-50 rounded-xl p-3 outline-none focus:bg-white focus:ring-2 focus:ring-orange-100 focus:border-orange-300 transition-all text-sm placeholder:text-gray-400" 
+                            rows={2} 
+                            placeholder="Ex.: Paciente pediu para remarcar."
+                            value={reagendarForm.motivo} 
+                            onChange={e => handleReagendarInput('motivo', e.target.value)} 
+                        />
+                    </div>
+
+                    <div className="flex gap-2 pt-2">
+                        <button onClick={() => setViewMode('details')} className="flex-1 bg-gray-100 text-gray-600 py-3 rounded-xl text-sm font-medium">Voltar</button>
+                        <button 
+                            onClick={confirmarReagendamento} 
+                            className="flex-1 bg-orange-600 text-white py-3 rounded-xl text-sm hover:bg-orange-700 font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+                            disabled={!!reagendarErrors.novaData || !!reagendarErrors.novaHora}
+                        >
+                            Confirmar
+                        </button>
+                    </div>
                  </div>
               )}
 

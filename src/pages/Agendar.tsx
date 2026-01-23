@@ -1,5 +1,5 @@
 import { useState, FormEvent } from 'react';
-import { Calendar, Clock, User, Phone, FileText, Upload, Paperclip, X, Trash2 } from 'lucide-react';
+import { Calendar, Clock, User, Phone, FileText, Upload, Paperclip, Trash2 } from 'lucide-react';
 import { Button } from '../components/ui/Button';
 import { Input } from '../components/ui/Input';
 import { Textarea } from '../components/ui/Textarea';
@@ -16,12 +16,35 @@ export function Agendar() {
     diagnostico: '',
   });
 
-  // AGORA É UM ARRAY DE ARQUIVOS
   const [arquivos, setArquivos] = useState<File[]>([]);
-  
   const [loading, setLoading] = useState(false);
   const [showToast, setShowToast] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
+
+  // --- VALIDAÇÃO DE DATA E HORA RETROATIVA ---
+  const validarDataHora = (data: string, hora: string) => {
+    if (!data) return null;
+
+    const agora = new Date();
+    const hojeStr = agora.toISOString().split('T')[0]; // YYYY-MM-DD
+
+    // 1. Valida Data Passada
+    if (data < hojeStr) {
+      return "A data não pode ser anterior a hoje.";
+    }
+
+    // 2. Valida Horário Passado (se for hoje)
+    if (data === hojeStr && hora) {
+      const [horaSel, minSel] = hora.split(':').map(Number);
+      const horaAtual = agora.getHours();
+      const minAtual = agora.getMinutes();
+
+      if (horaSel < horaAtual || (horaSel === horaAtual && minSel < minAtual)) {
+        return "O horário já passou.";
+      }
+    }
+    return null;
+  };
 
   const handlePhoneChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     let value = e.target.value.replace(/\D/g, "").substring(0, 11);
@@ -35,21 +58,34 @@ export function Agendar() {
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
     const { name, value } = e.target;
-    setFormData(prev => ({ ...prev, [name]: value }));
+    const novoForm = { ...formData, [name]: value };
+    setFormData(novoForm);
+
+    // Limpa erro genérico do campo
     if (errors[name]) setErrors(prev => ({ ...prev, [name]: '' }));
+
+    // Validação em Tempo Real para Data e Hora
+    if (name === 'data_agendamento' || name === 'hora_agendamento') {
+      const erroDataHora = validarDataHora(
+        name === 'data_agendamento' ? value : formData.data_agendamento,
+        name === 'hora_agendamento' ? value : formData.hora_agendamento
+      );
+
+      if (erroDataHora) {
+        // Define o erro no campo que está sendo alterado (ou na data se for genérico)
+        setErrors(prev => ({ ...prev, [name]: erroDataHora }));
+      } else {
+        // Se corrigiu, limpa os erros de data e hora
+        setErrors(prev => ({ ...prev, data_agendamento: '', hora_agendamento: '' }));
+      }
+    }
   };
 
-  // --- LÓGICA DE MÚLTIPLOS ARQUIVOS ---
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files) {
       const novosArquivos = Array.from(e.target.files);
       const total = arquivos.length + novosArquivos.length;
-
-      if (total > 5) {
-        alert("Máximo de 5 arquivos permitidos.");
-        return;
-      }
-      
+      if (total > 5) { alert("Máximo de 5 arquivos permitidos."); return; }
       setArquivos(prev => [...prev, ...novosArquivos]);
     }
   };
@@ -58,20 +94,13 @@ export function Agendar() {
     setArquivos(prev => prev.filter((_, i) => i !== index));
   };
 
-  // Função que sobe UM arquivo e retorna o objeto { nome, url }
   const uploadArquivoUnico = async (file: File) => {
     const fileExt = file.name.split('.').pop();
     const fileName = `${Date.now()}_${Math.random().toString(36).substring(7)}.${fileExt}`;
-    
     const { error } = await supabase.storage.from('anexos').upload(fileName, file);
     if (error) throw error;
-
     const { data } = supabase.storage.from('anexos').getPublicUrl(fileName);
-    
-    return {
-      nome: file.name, // Nome original para mostrar na tela depois
-      url: data.publicUrl
-    };
+    return { nome: file.name, url: data.publicUrl };
   };
 
   const handleSubmit = async (e: FormEvent) => {
@@ -84,6 +113,12 @@ export function Agendar() {
     if (!formData.nome_paciente) novosErros.nome_paciente = 'Nome obrigatório';
     if (!formData.telefone_paciente || formData.telefone_paciente.length < 14) novosErros.telefone_paciente = 'Telefone inválido';
     
+    // Validação Final de Retroativo
+    const erroRetroativo = validarDataHora(formData.data_agendamento, formData.hora_agendamento);
+    if (erroRetroativo) {
+        novosErros.data_agendamento = erroRetroativo;
+    }
+
     if (Object.keys(novosErros).length > 0) {
       setErrors(novosErros);
       setLoading(false);
@@ -91,15 +126,12 @@ export function Agendar() {
     }
 
     try {
-      // 1. Faz upload de todos os arquivos em paralelo
       const listaAnexos = [];
       if (arquivos.length > 0) {
-        // Promise.all espera todos os uploads terminarem
         const uploads = await Promise.all(arquivos.map(file => uploadArquivoUnico(file)));
         listaAnexos.push(...uploads);
       }
 
-      // 2. Salva no banco (agora mandamos o JSON completo)
       const { error } = await supabase.from('agendamentos').insert([{
         data_agendamento: formData.data_agendamento,
         hora_agendamento: formData.hora_agendamento,
@@ -107,14 +139,14 @@ export function Agendar() {
         telefone_paciente: formData.telefone_paciente,
         diagnostico: formData.diagnostico,
         status: 'agendado',
-        anexos: listaAnexos // Coluna nova JSONB
+        anexos: listaAnexos
       }]);
       
       if (error) throw error;
       
       setShowToast(true);
       setFormData({ data_agendamento: '', hora_agendamento: '', nome_paciente: '', telefone_paciente: '', diagnostico: '' });
-      setArquivos([]); // Limpa lista
+      setArquivos([]);
     } catch (error: any) {
       alert('Erro: ' + error.message);
     } finally {
@@ -155,26 +187,16 @@ export function Agendar() {
           <Input label="Telefone / WhatsApp" name="telefone_paciente" value={formData.telefone_paciente} onChange={handlePhoneChange} required placeholder="(xx) xxxxx-xxxx" maxLength={15} icon={<Phone size={20} />} error={errors.telefone_paciente} />
           <Textarea label="Diagnóstico / Motivo" name="diagnostico" value={formData.diagnostico} onChange={handleChange} rows={3} icon={<FileText size={20} />} />
 
-          {/* ÁREA DE UPLOAD MÚLTIPLO */}
           <div className="w-full">
             <label className="text-sm font-semibold text-slate-700 mb-1.5 block">Anexos (Máx: 5)</label>
-            
             <div className="border-2 border-dashed border-slate-300 rounded-xl bg-slate-50 p-6 hover:bg-white hover:border-blue-400 transition-colors relative text-center">
-               <input 
-                  type="file" 
-                  multiple // PERMITE VÁRIOS
-                  onChange={handleFileChange} 
-                  className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
-                  accept=".pdf,image/*" 
-               />
+               <input type="file" multiple onChange={handleFileChange} className="absolute inset-0 w-full h-full opacity-0 cursor-pointer" accept=".pdf,image/*" />
                <div className="flex flex-col items-center justify-center gap-2 text-slate-500">
                   <Upload size={32} className="text-blue-400" />
                   <p className="text-sm font-medium">Clique ou arraste arquivos aqui</p>
                   <p className="text-xs text-slate-400">PDF ou Imagens</p>
                </div>
             </div>
-
-            {/* LISTA DE ARQUIVOS SELECIONADOS */}
             {arquivos.length > 0 && (
               <div className="mt-3 space-y-2">
                 {arquivos.map((arq, index) => (
@@ -183,13 +205,7 @@ export function Agendar() {
                       <Paperclip size={16} className="text-blue-600 flex-shrink-0" />
                       <span className="text-sm text-slate-700 truncate">{arq.name}</span>
                     </div>
-                    <button 
-                      type="button" 
-                      onClick={() => removerArquivo(index)}
-                      className="p-1 hover:bg-red-50 text-slate-400 hover:text-red-500 rounded transition-colors"
-                    >
-                      <Trash2 size={16} />
-                    </button>
+                    <button type="button" onClick={() => removerArquivo(index)} className="p-1 hover:bg-red-50 text-slate-400 hover:text-red-500 rounded transition-colors"><Trash2 size={16} /></button>
                   </div>
                 ))}
               </div>

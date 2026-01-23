@@ -63,7 +63,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
 
             {/* Botão Mobile */}
             <button 
-              className="md:hidden p-2 text-gray-600 hover:bg-gray-100 rounded-lg"
+              className="md:hidden p-2 text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
               onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
             >
               {isMobileMenuOpen ? <X size={24} /> : <Menu size={24} />}
@@ -72,21 +72,42 @@ export function Layout({ children }: { children: React.ReactNode }) {
           </div>
         </div>
 
-        {/* Menu Mobile */}
+        {/* --- MENU MOBILE FLUTUANTE (AJUSTADO) --- */}
         {isMobileMenuOpen && (
-          <div className="md:hidden border-t border-gray-100 bg-white absolute w-full left-0 shadow-lg animate-in slide-in-from-top-5 duration-200">
-            <div className="flex flex-col p-4 space-y-2">
-              <Link to="/" onClick={handleNavigation} className={`flex items-center gap-3 px-4 py-3 rounded-lg ${isActive('/') ? 'bg-blue-50 text-blue-700 font-semibold' : 'text-gray-600 hover:bg-gray-50'}`}>
-                <HomeIcon size={20} /> Início
-              </Link>
-              <Link to="/novo" onClick={handleNavigation} className={`flex items-center gap-3 px-4 py-3 rounded-lg ${isActive('/novo') ? 'bg-blue-50 text-blue-700 font-semibold' : 'text-gray-600 hover:bg-gray-50'}`}>
-                <Calendar size={20} /> Novo Agendamento
-              </Link>
-              <Link to="/agenda" onClick={handleNavigation} className={`flex items-center gap-3 px-4 py-3 rounded-lg ${isActive('/agenda') ? 'bg-blue-50 text-blue-700 font-semibold' : 'text-gray-600 hover:bg-gray-50'}`}>
-                <ClipboardList size={20} /> Ver Agenda
-              </Link>
+          <>
+            {/* Overlay transparente para fechar ao clicar fora */}
+            <div 
+                className="fixed inset-0 z-40 bg-transparent" 
+                onClick={() => setIsMobileMenuOpen(false)}
+            />
+
+            {/* O Menu Flutuante */}
+            <div className="md:hidden absolute top-20 right-4 z-50 w-auto min-w-[200px] bg-white rounded-xl shadow-2xl border border-gray-100 animate-in fade-in slide-in-from-top-2 duration-200">
+              <div className="flex flex-col p-2 space-y-1">
+                <Link 
+                    to="/" 
+                    onClick={handleNavigation} 
+                    className={`flex items-center gap-3 px-4 py-3 rounded-lg whitespace-nowrap transition-colors ${isActive('/') ? 'bg-blue-50 text-blue-700 font-semibold' : 'text-gray-600 hover:bg-gray-50'}`}
+                >
+                  <HomeIcon size={18} /> Início
+                </Link>
+                <Link 
+                    to="/novo" 
+                    onClick={handleNavigation} 
+                    className={`flex items-center gap-3 px-4 py-3 rounded-lg whitespace-nowrap transition-colors ${isActive('/novo') ? 'bg-blue-50 text-blue-700 font-semibold' : 'text-gray-600 hover:bg-gray-50'}`}
+                >
+                  <Calendar size={18} /> Novo Agendamento
+                </Link>
+                <Link 
+                    to="/agenda" 
+                    onClick={handleNavigation} 
+                    className={`flex items-center gap-3 px-4 py-3 rounded-lg whitespace-nowrap transition-colors ${isActive('/agenda') ? 'bg-blue-50 text-blue-700 font-semibold' : 'text-gray-600 hover:bg-gray-50'}`}
+                >
+                  <ClipboardList size={18} /> Ver Agenda
+                </Link>
+              </div>
             </div>
-          </div>
+          </>
         )}
       </header>
 

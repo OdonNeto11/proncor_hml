@@ -41,7 +41,7 @@ export function Agenda() {
 
   // Formulários
   const [reagendarForm, setReagendarForm] = useState({ novaData: '', novaHora: '', motivo: '' });
-  const [reagendarErrors, setReagendarErrors] = useState({ novaData: '', novaHora: '' }); // NOVO: Erros visuais
+  const [reagendarErrors, setReagendarErrors] = useState({ novaData: '', novaHora: '' });
   
   const [editForm, setEditForm] = useState({ nome: '', telefone: '', diagnostico: '' });
 
@@ -66,12 +66,24 @@ export function Agenda() {
 
   useEffect(() => { fetchAgendamentos(); }, [dataInicio, dataFim]);
 
-  // --- FILTROS ---
+  // --- LÓGICA DE FILTRO INTELIGENTE (NOME + TELEFONE) ---
   const agendamentosFiltrados = agendamentos.filter(ag => {
     const termo = busca.toLowerCase();
-    const matchTexto = ag.nome_paciente?.toLowerCase().includes(termo) || ag.telefone_paciente?.includes(termo) || false;
+    
+    // 1. Busca pelo Nome
+    const matchNome = ag.nome_paciente?.toLowerCase().includes(termo);
+
+    // 2. Busca pelo Telefone (Remove formatação para comparar apenas números)
+    // Ex: Se o banco tem "(11) 99999-8888" e busco "1199999", agora encontra.
+    const telefoneLimpoBanco = ag.telefone_paciente?.replace(/\D/g, '') || '';
+    const termoLimpoBusca = termo.replace(/\D/g, '');
+    const matchTelefone = ag.telefone_paciente?.includes(termo) || (termoLimpoBusca.length > 0 && telefoneLimpoBanco.includes(termoLimpoBusca));
+
+    const matchTexto = matchNome || matchTelefone;
+
     const statusBanco = ag.status?.toLowerCase() || 'agendado';
     const matchStatus = filtroStatus ? statusBanco === filtroStatus.toLowerCase() : true;
+    
     return matchTexto && matchStatus;
   });
 
@@ -90,20 +102,16 @@ export function Agenda() {
     setEditForm(prev => ({ ...prev, telefone: value }));
   };
 
-  // Lógica de validação isolada
   const validarCamposReagendamento = (data: string, hora: string) => {
     const erros = { novaData: '', novaHora: '' };
     const agora = new Date();
     const hojeStr = agora.toISOString().split('T')[0];
 
-    // Valida Data
     if (!data) {
-        // Vazio não é erro imediato no onChange, só no submit
     } else if (data < hojeStr) {
         erros.novaData = "Data retroativa não permitida.";
     }
 
-    // Valida Hora (somente se for hoje)
     if (data === hojeStr && hora) {
         const [h, m] = hora.split(':').map(Number);
         if (h < agora.getHours() || (h === agora.getHours() && m < agora.getMinutes())) {
@@ -113,18 +121,15 @@ export function Agenda() {
     return erros;
   };
 
-  // Ao alterar input de reagendamento
   const handleReagendarInput = (campo: 'novaData' | 'novaHora' | 'motivo', valor: string) => {
     const novoForm = { ...reagendarForm, [campo]: valor };
     setReagendarForm(novoForm);
 
-    // Se mexeu em data ou hora, valida imediatamente
     if (campo === 'novaData' || campo === 'novaHora') {
         const errosAtuais = validarCamposReagendamento(
             campo === 'novaData' ? valor : novoForm.novaData,
             campo === 'novaHora' ? valor : novoForm.novaHora
         );
-        // Atualiza só o erro do campo que mexeu (ou limpa ambos se estiver tudo ok)
         setReagendarErrors(errosAtuais);
     }
   };
@@ -140,16 +145,13 @@ export function Agenda() {
   };
 
   const confirmarReagendamento = async () => {
-    // 1. Validação Final antes de enviar
     let erros = validarCamposReagendamento(reagendarForm.novaData, reagendarForm.novaHora);
-    
-    // Verifica campos vazios
     if (!reagendarForm.novaData) erros.novaData = "Data obrigatória.";
     if (!reagendarForm.novaHora) erros.novaHora = "Hora obrigatória.";
 
     if (erros.novaData || erros.novaHora) {
         setReagendarErrors(erros);
-        return; // Para aqui e mostra o erro visual
+        return;
     }
 
     try {
@@ -164,13 +166,10 @@ export function Agenda() {
       }).eq('id', selectedAgendamento!.id);
       
       if (error) throw error;
-      
       setShowToast({ visible: true, message: 'Reagendado com sucesso!' });
       setSelectedAgendamento(null);
       fetchAgendamentos();
-    } catch (error) { 
-        alert("Erro ao reagendar, tente novamente."); 
-    }
+    } catch (error) { alert("Erro ao reagendar, tente novamente."); }
   };
 
   const confirmarEdicao = async () => {
@@ -193,7 +192,7 @@ export function Agenda() {
     setSelectedAgendamento(item);
     setViewMode('details');
     setReagendarForm({ novaData: '', novaHora: '', motivo: '' });
-    setReagendarErrors({ novaData: '', novaHora: '' }); // Limpa erros anteriores
+    setReagendarErrors({ novaData: '', novaHora: '' });
     setEditForm({ nome: item.nome_paciente, telefone: item.telefone_paciente, diagnostico: item.diagnostico || '' });
   };
 
@@ -219,7 +218,7 @@ export function Agenda() {
           <div><h1 className="text-2xl font-bold text-gray-800">Agenda de Consultas</h1><p className="text-gray-500 text-sm">Gerencie os atendimentos</p></div>
           <div className="w-full md:w-80 relative">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
-            <input type="text" placeholder="Buscar..." value={busca} onChange={e => setBusca(e.target.value)} className="w-full pl-10 pr-4 py-2 rounded-lg border border-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-500/20 text-sm" />
+            <input type="text" placeholder="Buscar por nome ou telefone..." value={busca} onChange={e => setBusca(e.target.value)} className="w-full pl-10 pr-4 py-2 rounded-lg border border-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-500/20 text-sm" />
           </div>
         </div>
         <div className="flex flex-col lg:flex-row gap-4 pt-4 border-t border-gray-50">
@@ -345,12 +344,10 @@ export function Agenda() {
                 </div>
               )}
 
-              {/* REAGENDAMENTO (COM VALIDAÇÃO VISUAL) */}
               {viewMode === 'reschedule' && (
                  <div className="space-y-5 animate-in slide-in-from-right-4 duration-300">
                     <div className="bg-orange-50 p-4 rounded-xl border border-orange-100 mb-2"><p className="text-sm text-orange-800 text-center font-medium">Selecione a nova data e horário</p></div>
                     
-                    {/* Data */}
                     <div>
                         <label className="text-xs font-bold text-gray-500 uppercase mb-1 block ml-1">Nova Data</label>
                         <div className="relative">
@@ -365,7 +362,6 @@ export function Agenda() {
                         {reagendarErrors.novaData && <span className="text-xs text-red-500 mt-1 ml-1 font-medium">{reagendarErrors.novaData}</span>}
                     </div>
 
-                    {/* Hora */}
                     <div>
                         <label className="text-xs font-bold text-gray-500 uppercase mb-1 block ml-1">Novo Horário</label>
                         <div className="relative">
@@ -380,7 +376,6 @@ export function Agenda() {
                         {reagendarErrors.novaHora && <span className="text-xs text-red-500 mt-1 ml-1 font-medium">{reagendarErrors.novaHora}</span>}
                     </div>
 
-                    {/* Motivo com Placeholder */}
                     <div>
                         <label className="text-xs font-bold text-gray-500 uppercase mb-1 block ml-1">Motivo</label>
                         <textarea 

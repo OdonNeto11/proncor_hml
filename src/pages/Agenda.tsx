@@ -22,7 +22,6 @@ const HORARIOS_FIXOS = [
 
 const OPCOES_PROCEDIMENTOS = ["Exames", "RX", "Tomografia"];
 
-// CONFIGURAÇÃO DOS STATUS (Cores e Textos)
 const STATUS_CONFIG: Record<string, { label: string, color: string, border: string, icon: any }> = {
   agendado: { label: 'Agendado', color: 'bg-blue-100 text-blue-700', border: 'border-blue-200', icon: Clock },
   reagendado: { label: 'Reagendado', color: 'bg-orange-100 text-orange-700', border: 'border-orange-200', icon: AlertTriangle },
@@ -49,7 +48,6 @@ type Agendamento = {
   medico_id: number | null;
 };
 
-// Adicionei 'confirm_status_update' para a tela de confirmação
 type ModalView = 'details' | 'edit' | 'reschedule' | 'update_status' | 'confirm_status_update' | 'confirm_cancel';
 
 export function Agenda() {
@@ -57,8 +55,6 @@ export function Agenda() {
   const [loading, setLoading] = useState(true);
   
   const [busca, setBusca] = useState('');
-  
-  // FILTRO: Começa com 'padrao' (Agendados + Reagendados)
   const [filtroStatus, setFiltroStatus] = useState('padrao'); 
   
   const [dataInicio, setDataInicio] = useState<Date | null>(new Date()); 
@@ -68,12 +64,11 @@ export function Agenda() {
   const [viewMode, setViewMode] = useState<ModalView>('details');
   const [showToast, setShowToast] = useState({ visible: false, message: '' });
 
-  // States para Reagendamento e Atualização
   const [reagendarDate, setReagendarDate] = useState<Date | null>(null);
   const [reagendarTime, setReagendarTime] = useState<Date | null>(null);
   const [reagendarMotivo, setReagendarMotivo] = useState('');
   const [bookedTimes, setBookedTimes] = useState<string[]>([]);
-  const [tempStatus, setTempStatus] = useState<string>(''); // Guarda o status temporário para confirmação
+  const [tempStatus, setTempStatus] = useState<string>('');
   
   const [editForm, setEditForm] = useState({ 
     numero_atendimento: '',
@@ -83,7 +78,6 @@ export function Agenda() {
     procedimentos: [] as string[]
   });
 
-  // --- FETCHING ---
   const fetchAgendamentos = async () => {
     setLoading(true);
     try {
@@ -93,7 +87,6 @@ export function Agenda() {
       let query = supabase
         .from('agendamentos')
         .select('*') 
-        // Removemos o filtro fixo de 'cancelado' aqui para permitir que o usuário filtre se quiser
         .order('data_agendamento', { ascending: true })
         .order('hora_agendamento', { ascending: true });
 
@@ -108,14 +101,25 @@ export function Agenda() {
 
   useEffect(() => { fetchAgendamentos(); }, [dataInicio, dataFim]);
 
-  // --- DISPONIBILIDADE ---
+  // --- DISPONIBILIDADE NO REAGENDAMENTO (ATUALIZADA) ---
   useEffect(() => {
     const fetchBookedTimesForReschedule = async () => {
       if (!reagendarDate) return;
       const dateStr = format(reagendarDate, 'yyyy-MM-dd');
-      const { data, error } = await supabase.from('agendamentos').select('hora_agendamento').eq('data_agendamento', dateStr).eq('status', 'agendado');
+      
+      const { data, error } = await supabase
+        .from('agendamentos')
+        .select('hora_agendamento')
+        .eq('data_agendamento', dateStr)
+        // AQUI ESTÁ A MUDANÇA: Bloqueia se for 'agendado' OU 'reagendado'
+        .in('status', ['agendado', 'reagendado']);
+
       if (error) { console.error(error); return; }
-      if (data) setBookedTimes(data.map(item => item.hora_agendamento.substring(0, 5)));
+
+      if (data) {
+        const times = data.map(item => item.hora_agendamento.substring(0, 5));
+        setBookedTimes(times);
+      }
     };
     if (viewMode === 'reschedule') {
         setBookedTimes([]);
@@ -148,25 +152,20 @@ export function Agenda() {
   const agendamentosFiltrados = agendamentos.filter(ag => {
     const termo = busca.toLowerCase();
     
-    // Match Texto
     const matchNome = ag.nome_paciente?.toLowerCase().includes(termo);
     const telefoneLimpoBanco = ag.telefone_paciente?.replace(/\D/g, '') || '';
     const termoLimpoBusca = termo.replace(/\D/g, '');
     const matchTelefone = ag.telefone_paciente?.includes(termo) || (termoLimpoBusca.length > 0 && telefoneLimpoBanco.includes(termoLimpoBusca));
     const matchNumero = ag.numero_atendimento?.toLowerCase().includes(termo);
 
-    // Match Status (Lógica Nova)
     let matchStatus = true;
     const status = ag.status?.toLowerCase() || 'agendado';
 
     if (filtroStatus === 'padrao') {
-        // Padrão: Mostra Agendado OU Reagendado (Esconde finalizados e cancelados)
         matchStatus = status === 'agendado' || status === 'reagendado';
     } else if (filtroStatus === '') {
-        // Todos: Mostra tudo (menos cancelado se preferir, mas "todos" geralmente inclui tudo)
         matchStatus = status !== 'cancelado'; 
     } else {
-        // Específico: Mostra exatamente o que foi selecionado
         matchStatus = status === filtroStatus;
     }
     
@@ -178,9 +177,6 @@ export function Agenda() {
     return acc;
   }, {} as Record<string, Agendamento[]>);
 
-  // --- ACTIONS ---
-
-  // Função intermediária para pedir confirmação
   const solicitarAtualizacaoStatus = (novoStatus: string) => {
       setTempStatus(novoStatus);
       setViewMode('confirm_status_update');
@@ -195,10 +191,7 @@ export function Agenda() {
         
         setShowToast({ visible: true, message: `Status alterado para: ${STATUS_CONFIG[tempStatus]?.label}` });
         
-        // Atualiza localmente
         setSelectedAgendamento({ ...selectedAgendamento, status: tempStatus });
-        
-        // Fecha modal
         setSelectedAgendamento(null);
         fetchAgendamentos();
     } catch (e) { alert('Erro ao atualizar status'); }
@@ -226,7 +219,6 @@ export function Agenda() {
     } catch (error) { alert("Erro ao reagendar, tente novamente."); }
   };
 
-  // ... (Restante dos handlers mantidos iguais) ...
   const handlePhoneEditChange = (valor: string) => {
     let value = valor.replace(/\D/g, "").substring(0, 11);
     if (value.length > 10) value = value.replace(/^(\d{2})(\d{5})(\d{4})/, "($1) $2-$3");
@@ -316,8 +308,6 @@ export function Agenda() {
           </div>
           <div className="relative flex-1">
               <ListChecks className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={16} />
-              
-              {/* SELECT DE STATUS (ATUALIZADO) */}
               <select value={filtroStatus} onChange={e => setFiltroStatus(e.target.value)} className="w-full pl-9 pr-8 py-2.5 rounded-lg border border-gray-200 text-sm focus:outline-none appearance-none bg-white h-10">
                   <option value="padrao">Padrão (Pendentes)</option>
                   <option value="">Todos</option>
@@ -329,7 +319,6 @@ export function Agenda() {
                   <option value="nao_respondeu">Não Respondeu</option>
                   <option value="cancelado">Cancelado</option>
               </select>
-
           </div>
         </div>
       </div>
@@ -357,7 +346,6 @@ export function Agenda() {
                   return (
                     <div key={item.id} onClick={() => abrirModal(item)} className="bg-white rounded-xl border p-4 shadow-sm hover:shadow-md cursor-pointer relative overflow-hidden group transition-all">
                         <div className={`absolute left-0 top-0 bottom-0 w-1.5 ${statusInfo.color.split(' ')[0].replace('bg-', 'bg-opacity-100 bg-')}`} style={{backgroundColor: ''}} /> 
-                        
                         <div className="pl-3">
                         <div className="flex justify-between mb-2">
                             <span className="flex items-center gap-1 font-bold text-slate-700 bg-slate-100 px-2 py-1 rounded text-xs"><Clock size={12} /> {item.hora_agendamento}</span>
@@ -365,14 +353,11 @@ export function Agenda() {
                                 {statusInfo.label}
                             </span>
                         </div>
-                        
                         {item.numero_atendimento && (
                             <span className="text-[10px] font-semibold text-gray-500 mb-1 block">#{item.numero_atendimento}</span>
                         )}
-
                         <h3 className="font-bold text-gray-800 truncate">{item.nome_paciente}</h3>
                         <p className="text-xs text-gray-400 flex items-center gap-1 mt-2"><MessageCircle size={10} /> {item.telefone_paciente}</p>
-                        
                         {item.procedimentos && item.procedimentos.length > 0 && (
                             <div className="flex flex-wrap gap-1 mt-2">
                                 {item.procedimentos.slice(0, 2).map((proc, i) => (
@@ -405,7 +390,6 @@ export function Agenda() {
                  viewMode === 'confirm_cancel' ? <h3 className="text-lg font-bold text-red-600">Cancelar</h3> :
                   <div className="flex items-center gap-2">
                     <h3 className="text-lg font-bold text-gray-800 line-clamp-1">{selectedAgendamento.nome_paciente}</h3>
-                    {/* Só edita se não estiver finalizado */}
                     {!['finalizado','encaminhado','retorno_pa', 'cancelado', 'nao_respondeu'].includes(selectedAgendamento.status) && (
                       <button onClick={() => setViewMode('edit')} className="p-1.5 bg-gray-100 text-gray-500 hover:bg-blue-100 hover:text-blue-600 rounded-lg transition-colors"><Edit size={18} /></button>
                     )}
@@ -460,20 +444,13 @@ export function Agenda() {
                     <p className="text-sm text-gray-700 whitespace-pre-line">{selectedAgendamento.diagnostico || 'Sem observações.'}</p>
                   </div>
 
-                  {/* BOTÕES DE AÇÃO */}
                   <div className="flex gap-2 pt-2">
-                      <button 
-                        onClick={() => setViewMode('update_status')} 
-                        className="flex-1 bg-blue-600 text-white font-medium py-3 rounded-xl hover:bg-blue-700 transition-colors flex items-center justify-center gap-2 text-sm"
-                      >
+                      <button onClick={() => setViewMode('update_status')} className="flex-1 bg-blue-600 text-white font-medium py-3 rounded-xl hover:bg-blue-700 transition-colors flex items-center justify-center gap-2 text-sm">
                         <CheckCircle2 size={18} /> Atualizar Status
                       </button>
                       
                       {!['cancelado', 'finalizado', 'encaminhado', 'retorno_pa'].includes(selectedAgendamento.status) && (
-                          <button 
-                            onClick={() => { setViewMode('reschedule'); setReagendarDate(new Date()); }} 
-                            className="flex-1 bg-orange-50 text-orange-700 border border-orange-200 font-medium py-3 rounded-xl hover:bg-orange-100 transition-colors flex items-center justify-center gap-2 text-sm"
-                          >
+                          <button onClick={() => { setViewMode('reschedule'); setReagendarDate(new Date()); }} className="flex-1 bg-orange-50 text-orange-700 border border-orange-200 font-medium py-3 rounded-xl hover:bg-orange-100 transition-colors flex items-center justify-center gap-2 text-sm">
                             <AlertTriangle size={18} /> Reagendar
                           </button>
                       )}
@@ -485,7 +462,7 @@ export function Agenda() {
                 </div>
               )}
 
-              {/* --- TELA DE SELEÇÃO DE STATUS --- */}
+              {/* TELA DE SELEÇÃO DE STATUS */}
               {viewMode === 'update_status' && (
                   <div className="space-y-3 animate-in slide-in-from-right-4 duration-300">
                       <p className="text-sm text-gray-600 mb-2">Selecione o novo status:</p>
@@ -505,7 +482,6 @@ export function Agenda() {
                           <ChevronRight size={18} className="text-indigo-400 group-hover:translate-x-1 transition-transform"/>
                       </button>
 
-                      {/* Só aparece se o status atual for 'reagendado' */}
                       {selectedAgendamento?.status === 'reagendado' && (
                           <button onClick={() => solicitarAtualizacaoStatus('nao_respondeu')} className="w-full flex items-center justify-between p-4 rounded-xl border border-gray-200 bg-gray-50 text-gray-600 hover:bg-gray-100 transition-all group">
                               <span className="font-semibold flex items-center gap-2"><AlertCircle size={18} /> Não respondeu após reagendamento</span>
@@ -517,41 +493,24 @@ export function Agenda() {
                   </div>
               )}
 
-              {/* --- TELA DE CONFIRMAÇÃO DE STATUS (NOVA) --- */}
+              {/* TELA DE CONFIRMAÇÃO DE STATUS (NOVA) */}
               {viewMode === 'confirm_status_update' && tempStatus && (
                   <div className="text-center space-y-6 animate-in zoom-in-95 duration-200">
-                      
                       <div className="bg-gray-50 p-6 rounded-2xl border border-gray-100">
                           <p className="text-gray-500 text-sm font-medium mb-4">Você está alterando o status para:</p>
-                          
-                          {/* Exibe o status escolhido bem grande */}
                           <div className={`inline-flex flex-col items-center justify-center p-4 rounded-2xl border-2 ${STATUS_CONFIG[tempStatus].color} ${STATUS_CONFIG[tempStatus].border}`}>
-                              {(() => {
-                                  const Icon = STATUS_CONFIG[tempStatus].icon;
-                                  return <Icon size={32} className="mb-2" />;
-                              })()}
+                              {(() => { const Icon = STATUS_CONFIG[tempStatus].icon; return <Icon size={32} className="mb-2" />; })()}
                               <span className="text-lg font-bold">{STATUS_CONFIG[tempStatus].label}</span>
                           </div>
                       </div>
-
                       <div className="flex gap-3">
-                          <button 
-                            onClick={() => setViewMode('update_status')} 
-                            className="flex-1 bg-gray-100 text-gray-700 py-3 rounded-xl font-semibold hover:bg-gray-200"
-                          >
-                            Voltar
-                          </button>
-                          <button 
-                            onClick={executarAtualizacaoStatus} 
-                            className="flex-1 bg-blue-600 text-white py-3 rounded-xl font-semibold hover:bg-blue-700 shadow-md shadow-blue-200"
-                          >
-                            Confirmar
-                          </button>
+                          <button onClick={() => setViewMode('update_status')} className="flex-1 bg-gray-100 text-gray-700 py-3 rounded-xl font-semibold hover:bg-gray-200">Voltar</button>
+                          <button onClick={executarAtualizacaoStatus} className="flex-1 bg-blue-600 text-white py-3 rounded-xl font-semibold hover:bg-blue-700 shadow-md shadow-blue-200">Confirmar</button>
                       </div>
                   </div>
               )}
 
-              {/* --- OUTRAS VIEWS (Edit, Reschedule, Cancel) --- */}
+              {/* ... Outras views (Edit, Reschedule, Cancel) sem mudanças ... */}
               {viewMode === 'edit' && (
                 <div className="space-y-4 animate-in slide-in-from-right-4 duration-300">
                    <div><label className="text-sm font-medium text-gray-700 mb-1 flex items-center gap-1"><Hash size={14} /> Nº Atendimento</label><input type="text" className="w-full h-11 border border-gray-200 bg-gray-50 rounded-xl px-3 outline-none font-mono" value={editForm.numero_atendimento} onChange={e => handleNumeroAtendimentoEditChange(e.target.value)} maxLength={10} /></div>

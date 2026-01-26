@@ -53,7 +53,7 @@ export function Agendar() {
         .from('agendamentos')
         .select('hora_agendamento')
         .eq('data_agendamento', dateStr)
-        .eq('status', 'agendado');
+        .in('status', ['agendado', 'reagendado']);
 
       if (error) { console.error(error); return; }
 

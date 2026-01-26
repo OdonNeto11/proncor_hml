@@ -215,7 +215,7 @@ export function Agendar() {
     <div className="max-w-4xl mx-auto animate-in fade-in duration-500">
       <div className="mb-8">
         <h1 className="text-3xl font-bold text-gray-800 mb-2">Novo Agendamento</h1>
-        <p className="text-gray-600">Preencha os dados e anexe até 5 exames</p>
+        <p className="text-gray-600">Preencha os dados a seguir:</p>
       </div>
 
       <Card>

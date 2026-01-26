@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { 
   Calendar as CalendarIcon, Clock, CheckCircle2, 
   Search, MessageCircle, AlertTriangle, X, ListChecks, Edit, Save, RefreshCw, AlertCircle, FileDown, Paperclip,
-  Hash, Activity 
+  Hash, Activity, ChevronRight, Stethoscope, ArrowRightCircle, HelpCircle
 } from 'lucide-react';
 import { format, parseISO, isToday, isTomorrow, isSameDay, endOfMonth, setHours, setMinutes } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
@@ -13,7 +13,6 @@ import { Toast } from '../components/ui/Toast';
 
 registerLocale('pt-BR', ptBR); 
 
-// LISTA DE HORÁRIOS
 const HORARIOS_FIXOS = [
   "07:30", "08:00", "08:30", "09:00",
   "13:00", "13:30", "14:00", "14:30",
@@ -22,6 +21,17 @@ const HORARIOS_FIXOS = [
 ];
 
 const OPCOES_PROCEDIMENTOS = ["Exames", "RX", "Tomografia"];
+
+// CONFIGURAÇÃO DOS STATUS (Cores e Textos)
+const STATUS_CONFIG: Record<string, { label: string, color: string, border: string, icon: any }> = {
+  agendado: { label: 'Agendado', color: 'bg-blue-100 text-blue-700', border: 'border-blue-200', icon: Clock },
+  reagendado: { label: 'Reagendado', color: 'bg-orange-100 text-orange-700', border: 'border-orange-200', icon: AlertTriangle },
+  finalizado: { label: 'Finalizado', color: 'bg-green-100 text-green-700', border: 'border-green-200', icon: CheckCircle2 },
+  encaminhado: { label: 'Encaminhado Amb.', color: 'bg-purple-100 text-purple-700', border: 'border-purple-200', icon: ArrowRightCircle },
+  retorno_pa: { label: 'Retorno ao PA', color: 'bg-indigo-100 text-indigo-700', border: 'border-indigo-200', icon: Stethoscope },
+  nao_respondeu: { label: 'Não Respondeu', color: 'bg-gray-100 text-gray-600', border: 'border-gray-200', icon: HelpCircle },
+  cancelado: { label: 'Cancelado', color: 'bg-red-100 text-red-700', border: 'border-red-200', icon: AlertCircle },
+};
 
 type Anexo = { nome: string; url: string; };
 
@@ -39,14 +49,17 @@ type Agendamento = {
   medico_id: number | null;
 };
 
-type ModalView = 'details' | 'edit' | 'reschedule' | 'confirm_conclude' | 'confirm_cancel';
+// Adicionei 'confirm_status_update' para a tela de confirmação
+type ModalView = 'details' | 'edit' | 'reschedule' | 'update_status' | 'confirm_status_update' | 'confirm_cancel';
 
 export function Agenda() {
   const [agendamentos, setAgendamentos] = useState<Agendamento[]>([]);
   const [loading, setLoading] = useState(true);
   
   const [busca, setBusca] = useState('');
-  const [filtroStatus, setFiltroStatus] = useState('agendado'); 
+  
+  // FILTRO: Começa com 'padrao' (Agendados + Reagendados)
+  const [filtroStatus, setFiltroStatus] = useState('padrao'); 
   
   const [dataInicio, setDataInicio] = useState<Date | null>(new Date()); 
   const [dataFim, setDataFim] = useState<Date | null>(endOfMonth(new Date())); 
@@ -55,11 +68,12 @@ export function Agenda() {
   const [viewMode, setViewMode] = useState<ModalView>('details');
   const [showToast, setShowToast] = useState({ visible: false, message: '' });
 
-  // States para Reagendamento
+  // States para Reagendamento e Atualização
   const [reagendarDate, setReagendarDate] = useState<Date | null>(null);
   const [reagendarTime, setReagendarTime] = useState<Date | null>(null);
   const [reagendarMotivo, setReagendarMotivo] = useState('');
   const [bookedTimes, setBookedTimes] = useState<string[]>([]);
+  const [tempStatus, setTempStatus] = useState<string>(''); // Guarda o status temporário para confirmação
   
   const [editForm, setEditForm] = useState({ 
     numero_atendimento: '',
@@ -79,7 +93,7 @@ export function Agenda() {
       let query = supabase
         .from('agendamentos')
         .select('*') 
-        .neq('status', 'cancelado')
+        // Removemos o filtro fixo de 'cancelado' aqui para permitir que o usuário filtre se quiser
         .order('data_agendamento', { ascending: true })
         .order('hora_agendamento', { ascending: true });
 
@@ -130,24 +144,32 @@ export function Agenda() {
     setReagendarTime(newTime);
   };
 
-  // --- FILTROS (ATUALIZADO AQUI) ---
+  // --- FILTROS ---
   const agendamentosFiltrados = agendamentos.filter(ag => {
     const termo = busca.toLowerCase();
     
-    // 1. Match Nome
+    // Match Texto
     const matchNome = ag.nome_paciente?.toLowerCase().includes(termo);
-    
-    // 2. Match Telefone
     const telefoneLimpoBanco = ag.telefone_paciente?.replace(/\D/g, '') || '';
     const termoLimpoBusca = termo.replace(/\D/g, '');
     const matchTelefone = ag.telefone_paciente?.includes(termo) || (termoLimpoBusca.length > 0 && telefoneLimpoBanco.includes(termoLimpoBusca));
-    
-    // 3. Match Número Atendimento (NOVO)
     const matchNumero = ag.numero_atendimento?.toLowerCase().includes(termo);
 
-    const matchStatus = filtroStatus ? (ag.status?.toLowerCase() || 'agendado') === filtroStatus.toLowerCase() : true;
+    // Match Status (Lógica Nova)
+    let matchStatus = true;
+    const status = ag.status?.toLowerCase() || 'agendado';
+
+    if (filtroStatus === 'padrao') {
+        // Padrão: Mostra Agendado OU Reagendado (Esconde finalizados e cancelados)
+        matchStatus = status === 'agendado' || status === 'reagendado';
+    } else if (filtroStatus === '') {
+        // Todos: Mostra tudo (menos cancelado se preferir, mas "todos" geralmente inclui tudo)
+        matchStatus = status !== 'cancelado'; 
+    } else {
+        // Específico: Mostra exatamente o que foi selecionado
+        matchStatus = status === filtroStatus;
+    }
     
-    // Retorna se der match em QUALQUER UM dos campos E o status estiver correto
     return (matchNome || matchTelefone || matchNumero) && matchStatus;
   });
 
@@ -156,38 +178,27 @@ export function Agenda() {
     return acc;
   }, {} as Record<string, Agendamento[]>);
 
-  const handlePhoneEditChange = (valor: string) => {
-    let value = valor.replace(/\D/g, "").substring(0, 11);
-    if (value.length > 10) value = value.replace(/^(\d{2})(\d{5})(\d{4})/, "($1) $2-$3");
-    else if (value.length > 6) value = value.replace(/^(\d{2})(\d{4})(\d{0,4})/, "($1) $2-$3");
-    else if (value.length > 2) value = value.replace(/^(\d{2})(\d{0,5})/, "($1) $2");
-    else if (value.length > 0) value = value.replace(/^(\d*)/, "($1");
-    setEditForm(prev => ({ ...prev, telefone: value }));
+  // --- ACTIONS ---
+
+  // Função intermediária para pedir confirmação
+  const solicitarAtualizacaoStatus = (novoStatus: string) => {
+      setTempStatus(novoStatus);
+      setViewMode('confirm_status_update');
   };
 
-  const handleNumeroAtendimentoEditChange = (valor: string) => {
-    const value = valor.replace(/\D/g, ""); 
-    setEditForm(prev => ({ ...prev, numero_atendimento: value }));
-  };
+  const executarAtualizacaoStatus = async () => {
+    if (!tempStatus || !selectedAgendamento) return;
 
-  const toggleProcedimentoEdit = (opcao: string) => {
-    setEditForm(prev => {
-        const jaExiste = prev.procedimentos.includes(opcao);
-        let novosProcedimentos;
-        if (jaExiste) {
-            novosProcedimentos = prev.procedimentos.filter(p => p !== opcao);
-        } else {
-            novosProcedimentos = [...prev.procedimentos, opcao];
-        }
-        return { ...prev, procedimentos: novosProcedimentos };
-    });
-  };
-
-  const executarAtualizacaoStatus = async (id: number, novoStatus: string) => {
     try {
-        const { error } = await supabase.from('agendamentos').update({ status: novoStatus }).eq('id', id);
+        const { error } = await supabase.from('agendamentos').update({ status: tempStatus }).eq('id', selectedAgendamento.id);
         if (error) throw error;
-        setShowToast({ visible: true, message: `Status atualizado!` });
+        
+        setShowToast({ visible: true, message: `Status alterado para: ${STATUS_CONFIG[tempStatus]?.label}` });
+        
+        // Atualiza localmente
+        setSelectedAgendamento({ ...selectedAgendamento, status: tempStatus });
+        
+        // Fecha modal
         setSelectedAgendamento(null);
         fetchAgendamentos();
     } catch (e) { alert('Erro ao atualizar status'); }
@@ -205,7 +216,7 @@ export function Agenda() {
         data_agendamento: dataStr,
         hora_agendamento: horaStr,
         diagnostico: novoDiagnostico,
-        status: 'agendado'
+        status: 'reagendado'
       }).eq('id', selectedAgendamento!.id);
       
       if (error) throw error;
@@ -215,6 +226,31 @@ export function Agenda() {
     } catch (error) { alert("Erro ao reagendar, tente novamente."); }
   };
 
+  // ... (Restante dos handlers mantidos iguais) ...
+  const handlePhoneEditChange = (valor: string) => {
+    let value = valor.replace(/\D/g, "").substring(0, 11);
+    if (value.length > 10) value = value.replace(/^(\d{2})(\d{5})(\d{4})/, "($1) $2-$3");
+    else if (value.length > 6) value = value.replace(/^(\d{2})(\d{4})(\d{0,4})/, "($1) $2-$3");
+    else if (value.length > 2) value = value.replace(/^(\d{2})(\d{0,5})/, "($1) $2");
+    else if (value.length > 0) value = value.replace(/^(\d*)/, "($1");
+    setEditForm(prev => ({ ...prev, telefone: value }));
+  };
+  const handleNumeroAtendimentoEditChange = (valor: string) => {
+    const value = valor.replace(/\D/g, ""); 
+    setEditForm(prev => ({ ...prev, numero_atendimento: value }));
+  };
+  const toggleProcedimentoEdit = (opcao: string) => {
+    setEditForm(prev => {
+        const jaExiste = prev.procedimentos.includes(opcao);
+        let novosProcedimentos;
+        if (jaExiste) {
+            novosProcedimentos = prev.procedimentos.filter(p => p !== opcao);
+        } else {
+            novosProcedimentos = [...prev.procedimentos, opcao];
+        }
+        return { ...prev, procedimentos: novosProcedimentos };
+    });
+  };
   const confirmarEdicao = async () => {
      if (!selectedAgendamento) return;
      try {
@@ -225,24 +261,13 @@ export function Agenda() {
             diagnostico: editForm.diagnostico,
             procedimentos: editForm.procedimentos
         }).eq('id', selectedAgendamento.id);
-        
         if (error) throw error;
         setShowToast({ visible: true, message: 'Dados atualizados!' });
-        
-        setSelectedAgendamento({
-            ...selectedAgendamento, 
-            ...editForm,
-            numero_atendimento: editForm.numero_atendimento,
-            nome_paciente: editForm.nome,
-            telefone_paciente: editForm.telefone,
-            procedimentos: editForm.procedimentos
-        });
-        
+        setSelectedAgendamento({...selectedAgendamento, ...editForm});
         setViewMode('details');
         fetchAgendamentos();
      } catch (e) { alert('Erro ao editar'); }
   };
-
   const abrirModal = (item: Agendamento) => {
     setSelectedAgendamento(item);
     setViewMode('details');
@@ -257,17 +282,10 @@ export function Agenda() {
         procedimentos: item.procedimentos || []
     });
   };
-
-  const getStatusColor = (status: string) => {
-      const s = status?.toLowerCase();
-      if (s === 'realizado') return '#16a34a'; 
-      return '#2563eb'; 
-  };
-
   const limparFiltros = () => {
     setDataInicio(new Date()); 
     setDataFim(endOfMonth(new Date())); 
-    setFiltroStatus('agendado');
+    setFiltroStatus('padrao');
     setBusca('');
   };
 
@@ -280,7 +298,6 @@ export function Agenda() {
           <div><h1 className="text-2xl font-bold text-gray-800">Agenda de Consultas</h1><p className="text-gray-500 text-sm">Gerencie os atendimentos</p></div>
           <div className="w-full md:w-80 relative">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
-            {/* Placeholder atualizado */}
             <input type="text" placeholder="Buscar por nome, telefone ou nº..." value={busca} onChange={e => setBusca(e.target.value)} className="w-full pl-10 pr-4 py-2 rounded-lg border border-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-500/20 text-sm" />
           </div>
         </div>
@@ -297,7 +314,23 @@ export function Agenda() {
                 <DatePicker selected={dataFim} onChange={(date: Date | null) => setDataFim(date)} locale="pt-BR" dateFormat="dd/MM/yyyy" placeholderText="Fim" className="custom-datepicker-input !h-10 !text-sm !pl-10" onFocus={(e) => e.target.blur()} />
             </div>
           </div>
-          <div className="relative flex-1"><ListChecks className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={16} /><select value={filtroStatus} onChange={e => setFiltroStatus(e.target.value)} className="w-full pl-9 pr-8 py-2.5 rounded-lg border border-gray-200 text-sm focus:outline-none appearance-none bg-white h-10"><option value="">Todos os Status</option><option value="agendado">A Realizar</option><option value="realizado">Realizados</option></select></div>
+          <div className="relative flex-1">
+              <ListChecks className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={16} />
+              
+              {/* SELECT DE STATUS (ATUALIZADO) */}
+              <select value={filtroStatus} onChange={e => setFiltroStatus(e.target.value)} className="w-full pl-9 pr-8 py-2.5 rounded-lg border border-gray-200 text-sm focus:outline-none appearance-none bg-white h-10">
+                  <option value="padrao">Padrão (Pendentes)</option>
+                  <option value="">Todos</option>
+                  <option value="agendado">Agendado</option>
+                  <option value="reagendado">Reagendado</option>
+                  <option value="finalizado">Finalizado</option>
+                  <option value="encaminhado">Encaminhado Amb.</option>
+                  <option value="retorno_pa">Retorno ao PA</option>
+                  <option value="nao_respondeu">Não Respondeu</option>
+                  <option value="cancelado">Cancelado</option>
+              </select>
+
+          </div>
         </div>
       </div>
 
@@ -319,34 +352,39 @@ export function Agenda() {
                 </h2>
               </div>
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                {itens.map((item) => (
-                  <div key={item.id} onClick={() => abrirModal(item)} className="bg-white rounded-xl border p-4 shadow-sm hover:shadow-md cursor-pointer relative overflow-hidden group transition-all">
-                    <div className="absolute left-0 top-0 bottom-0 w-1.5" style={{ backgroundColor: getStatusColor(item.status) }} />
-                    <div className="pl-3">
-                      <div className="flex justify-between mb-2">
-                        <span className="flex items-center gap-1 font-bold text-slate-700 bg-slate-100 px-2 py-1 rounded text-xs"><Clock size={12} /> {item.hora_agendamento}</span>
-                        <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full uppercase ${item.status?.toLowerCase() === 'realizado' ? 'text-green-700 bg-green-100' : 'text-red-700 bg-red-100'}`}>{item.status?.toLowerCase() === 'realizado' ? 'Realizado' : 'A Realizar'}</span>
-                      </div>
-                      
-                      {item.numero_atendimento && (
-                         <span className="text-[10px] font-semibold text-gray-500 mb-1 block">#{item.numero_atendimento}</span>
-                      )}
+                {itens.map((item) => {
+                  const statusInfo = STATUS_CONFIG[item.status?.toLowerCase()] || STATUS_CONFIG['agendado'];
+                  return (
+                    <div key={item.id} onClick={() => abrirModal(item)} className="bg-white rounded-xl border p-4 shadow-sm hover:shadow-md cursor-pointer relative overflow-hidden group transition-all">
+                        <div className={`absolute left-0 top-0 bottom-0 w-1.5 ${statusInfo.color.split(' ')[0].replace('bg-', 'bg-opacity-100 bg-')}`} style={{backgroundColor: ''}} /> 
+                        
+                        <div className="pl-3">
+                        <div className="flex justify-between mb-2">
+                            <span className="flex items-center gap-1 font-bold text-slate-700 bg-slate-100 px-2 py-1 rounded text-xs"><Clock size={12} /> {item.hora_agendamento}</span>
+                            <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full uppercase border ${statusInfo.color} ${statusInfo.border}`}>
+                                {statusInfo.label}
+                            </span>
+                        </div>
+                        
+                        {item.numero_atendimento && (
+                            <span className="text-[10px] font-semibold text-gray-500 mb-1 block">#{item.numero_atendimento}</span>
+                        )}
 
-                      <h3 className="font-bold text-gray-800 truncate">{item.nome_paciente}</h3>
-                      <p className="text-xs text-gray-400 flex items-center gap-1 mt-2"><MessageCircle size={10} /> {item.telefone_paciente}</p>
-                      
-                      {item.procedimentos && item.procedimentos.length > 0 && (
-                         <div className="flex flex-wrap gap-1 mt-2">
-                             {item.procedimentos.slice(0, 2).map((proc, i) => (
-                                 <span key={i} className="text-[9px] bg-emerald-50 text-emerald-600 px-1.5 py-0.5 rounded-md border border-emerald-100">{proc}</span>
-                             ))}
-                             {item.procedimentos.length > 2 && <span className="text-[9px] text-gray-400">+{item.procedimentos.length - 2}</span>}
-                         </div>
-                      )}
-
+                        <h3 className="font-bold text-gray-800 truncate">{item.nome_paciente}</h3>
+                        <p className="text-xs text-gray-400 flex items-center gap-1 mt-2"><MessageCircle size={10} /> {item.telefone_paciente}</p>
+                        
+                        {item.procedimentos && item.procedimentos.length > 0 && (
+                            <div className="flex flex-wrap gap-1 mt-2">
+                                {item.procedimentos.slice(0, 2).map((proc, i) => (
+                                    <span key={i} className="text-[9px] bg-emerald-50 text-emerald-600 px-1.5 py-0.5 rounded-md border border-emerald-100">{proc}</span>
+                                ))}
+                                {item.procedimentos.length > 2 && <span className="text-[9px] text-gray-400">+{item.procedimentos.length - 2}</span>}
+                            </div>
+                        )}
+                        </div>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             </div>
           ))}
@@ -362,12 +400,14 @@ export function Agenda() {
               <div className="flex-1">
                 {viewMode === 'edit' ? <h3 className="text-lg font-bold text-blue-600">Editando dados</h3> : 
                  viewMode === 'reschedule' ? <h3 className="text-lg font-bold text-orange-600">Reagendamento</h3> :
-                 viewMode === 'confirm_cancel' ? <h3 className="text-lg font-bold text-red-600">Confirmar Cancelamento</h3> :
-                 viewMode === 'confirm_conclude' ? <h3 className="text-lg font-bold text-green-600">Confirmar Conclusão</h3> :
+                 viewMode === 'update_status' ? <h3 className="text-lg font-bold text-purple-600">Atualizar Status</h3> :
+                 viewMode === 'confirm_status_update' ? <h3 className="text-lg font-bold text-green-600">Confirmação</h3> :
+                 viewMode === 'confirm_cancel' ? <h3 className="text-lg font-bold text-red-600">Cancelar</h3> :
                   <div className="flex items-center gap-2">
                     <h3 className="text-lg font-bold text-gray-800 line-clamp-1">{selectedAgendamento.nome_paciente}</h3>
-                    {selectedAgendamento.status?.toLowerCase() !== 'realizado' && (
-                      <button onClick={() => setViewMode('edit')} title="Editar dados" className="p-1.5 bg-gray-100 text-gray-500 hover:bg-blue-100 hover:text-blue-600 rounded-lg transition-colors"><Edit size={18} /></button>
+                    {/* Só edita se não estiver finalizado */}
+                    {!['finalizado','encaminhado','retorno_pa', 'cancelado', 'nao_respondeu'].includes(selectedAgendamento.status) && (
+                      <button onClick={() => setViewMode('edit')} className="p-1.5 bg-gray-100 text-gray-500 hover:bg-blue-100 hover:text-blue-600 rounded-lg transition-colors"><Edit size={18} /></button>
                     )}
                   </div>
                 }
@@ -377,13 +417,16 @@ export function Agenda() {
 
             <div className="p-6 rounded-b-2xl bg-white">
               
-              {/* --- DETALHES --- */}
               {viewMode === 'details' && (
                 <div className="space-y-5">
                    <div className="flex gap-2 text-center">
                     <div className="flex-1 bg-blue-50 p-2 rounded-xl border border-blue-100"><span className="text-[10px] text-blue-600 font-bold uppercase block">Data</span><div className="font-bold text-blue-900 text-sm">{format(parseISO(selectedAgendamento.data_agendamento), 'dd/MM')}</div></div>
                     <div className="flex-1 bg-blue-50 p-2 rounded-xl border border-blue-100"><span className="text-[10px] text-blue-600 font-bold uppercase block">Hora</span><div className="font-bold text-blue-900 text-sm">{selectedAgendamento.hora_agendamento}</div></div>
                     <div className="flex-1 bg-slate-100 p-2 rounded-xl border border-slate-200"><span className="text-[10px] text-slate-500 font-bold uppercase block">Atendimento</span><div className="font-bold text-slate-700 text-sm">#{selectedAgendamento.numero_atendimento}</div></div>
+                  </div>
+
+                  <div className={`p-2 rounded-lg text-center text-xs font-bold border ${STATUS_CONFIG[selectedAgendamento.status]?.color || STATUS_CONFIG['agendado'].color} ${STATUS_CONFIG[selectedAgendamento.status]?.border || STATUS_CONFIG['agendado'].border}`}>
+                      STATUS ATUAL: {STATUS_CONFIG[selectedAgendamento.status]?.label || selectedAgendamento.status.toUpperCase()}
                   </div>
 
                   {selectedAgendamento.procedimentos && selectedAgendamento.procedimentos.length > 0 && (
@@ -398,13 +441,10 @@ export function Agenda() {
                   
                   {selectedAgendamento.anexos && Array.isArray(selectedAgendamento.anexos) && selectedAgendamento.anexos.length > 0 && (
                     <div className="space-y-2">
-                        <p className="text-xs font-bold text-slate-400 uppercase">Anexos ({selectedAgendamento.anexos.length})</p>
+                        <p className="text-xs font-bold text-slate-400 uppercase">Anexos</p>
                         {selectedAgendamento.anexos.map((anexo, idx) => (
                             <a key={idx} href={anexo.url} target="_blank" rel="noopener noreferrer" className="flex items-center justify-between p-3 bg-blue-50 border border-blue-100 rounded-xl text-blue-700 hover:bg-blue-100 transition-colors group">
-                                <div className="flex items-center gap-2 overflow-hidden">
-                                    <FileDown size={18} className="flex-shrink-0" />
-                                    <span className="text-sm font-semibold truncate">{anexo.nome}</span>
-                                </div>
+                                <div className="flex items-center gap-2 overflow-hidden"><FileDown size={18} className="flex-shrink-0" /><span className="text-sm font-semibold truncate">{anexo.nome}</span></div>
                                 <span className="text-xs bg-white px-2 py-1 rounded text-blue-500 font-medium group-hover:text-blue-700">Baixar</span>
                             </a>
                         ))}
@@ -420,157 +460,127 @@ export function Agenda() {
                     <p className="text-sm text-gray-700 whitespace-pre-line">{selectedAgendamento.diagnostico || 'Sem observações.'}</p>
                   </div>
 
-                  {selectedAgendamento.status?.toLowerCase() !== 'realizado' && (
-                    <div className="flex gap-2 pt-2">
-                      <button onClick={() => setViewMode('confirm_conclude')} className="flex-1 bg-blue-600 text-white font-medium py-3 rounded-xl hover:bg-blue-700 transition-colors flex items-center justify-center gap-2 text-sm"><CheckCircle2 size={18} /> Concluir</button>
-                      
+                  {/* BOTÕES DE AÇÃO */}
+                  <div className="flex gap-2 pt-2">
                       <button 
-                        onClick={() => {
-                            setViewMode('reschedule');
-                            setReagendarDate(new Date()); 
-                        }} 
-                        className="flex-1 bg-orange-50 text-orange-700 border border-orange-200 font-medium py-3 rounded-xl hover:bg-orange-100 transition-colors flex items-center justify-center gap-2 text-sm"
+                        onClick={() => setViewMode('update_status')} 
+                        className="flex-1 bg-blue-600 text-white font-medium py-3 rounded-xl hover:bg-blue-700 transition-colors flex items-center justify-center gap-2 text-sm"
                       >
-                        <AlertTriangle size={18} /> Reagendar
+                        <CheckCircle2 size={18} /> Atualizar Status
                       </button>
-                    </div>
-                  )}
-                  {selectedAgendamento.status?.toLowerCase() !== 'realizado' && (
+                      
+                      {!['cancelado', 'finalizado', 'encaminhado', 'retorno_pa'].includes(selectedAgendamento.status) && (
+                          <button 
+                            onClick={() => { setViewMode('reschedule'); setReagendarDate(new Date()); }} 
+                            className="flex-1 bg-orange-50 text-orange-700 border border-orange-200 font-medium py-3 rounded-xl hover:bg-orange-100 transition-colors flex items-center justify-center gap-2 text-sm"
+                          >
+                            <AlertTriangle size={18} /> Reagendar
+                          </button>
+                      )}
+                  </div>
+                  
+                  {!['cancelado', 'finalizado', 'encaminhado', 'retorno_pa'].includes(selectedAgendamento.status) && (
                      <button onClick={() => setViewMode('confirm_cancel')} className="w-full text-xs text-red-400 hover:text-red-600 py-2 mt-2 font-medium">Cancelar agendamento</button>
                   )}
                 </div>
               )}
 
-              {/* --- EDIÇÃO --- */}
+              {/* --- TELA DE SELEÇÃO DE STATUS --- */}
+              {viewMode === 'update_status' && (
+                  <div className="space-y-3 animate-in slide-in-from-right-4 duration-300">
+                      <p className="text-sm text-gray-600 mb-2">Selecione o novo status:</p>
+                      
+                      <button onClick={() => solicitarAtualizacaoStatus('finalizado')} className="w-full flex items-center justify-between p-4 rounded-xl border border-green-200 bg-green-50 text-green-800 hover:bg-green-100 transition-all group">
+                          <span className="font-semibold flex items-center gap-2"><CheckCircle2 size={18} /> Finalizado</span>
+                          <ChevronRight size={18} className="text-green-400 group-hover:translate-x-1 transition-transform"/>
+                      </button>
+
+                      <button onClick={() => solicitarAtualizacaoStatus('encaminhado')} className="w-full flex items-center justify-between p-4 rounded-xl border border-purple-200 bg-purple-50 text-purple-800 hover:bg-purple-100 transition-all group">
+                          <span className="font-semibold flex items-center gap-2"><ArrowRightCircle size={18} /> Encaminhado ao Ambulatório</span>
+                          <ChevronRight size={18} className="text-purple-400 group-hover:translate-x-1 transition-transform"/>
+                      </button>
+
+                      <button onClick={() => solicitarAtualizacaoStatus('retorno_pa')} className="w-full flex items-center justify-between p-4 rounded-xl border border-indigo-200 bg-indigo-50 text-indigo-800 hover:bg-indigo-100 transition-all group">
+                          <span className="font-semibold flex items-center gap-2"><Stethoscope size={18} /> Retorno ao PA</span>
+                          <ChevronRight size={18} className="text-indigo-400 group-hover:translate-x-1 transition-transform"/>
+                      </button>
+
+                      {/* Só aparece se o status atual for 'reagendado' */}
+                      {selectedAgendamento?.status === 'reagendado' && (
+                          <button onClick={() => solicitarAtualizacaoStatus('nao_respondeu')} className="w-full flex items-center justify-between p-4 rounded-xl border border-gray-200 bg-gray-50 text-gray-600 hover:bg-gray-100 transition-all group">
+                              <span className="font-semibold flex items-center gap-2"><AlertCircle size={18} /> Não respondeu após reagendamento</span>
+                              <ChevronRight size={18} className="text-gray-400 group-hover:translate-x-1 transition-transform"/>
+                          </button>
+                      )}
+
+                      <button onClick={() => setViewMode('details')} className="w-full text-center text-sm text-gray-500 hover:text-gray-800 py-2 mt-2">Cancelar e Voltar</button>
+                  </div>
+              )}
+
+              {/* --- TELA DE CONFIRMAÇÃO DE STATUS (NOVA) --- */}
+              {viewMode === 'confirm_status_update' && tempStatus && (
+                  <div className="text-center space-y-6 animate-in zoom-in-95 duration-200">
+                      
+                      <div className="bg-gray-50 p-6 rounded-2xl border border-gray-100">
+                          <p className="text-gray-500 text-sm font-medium mb-4">Você está alterando o status para:</p>
+                          
+                          {/* Exibe o status escolhido bem grande */}
+                          <div className={`inline-flex flex-col items-center justify-center p-4 rounded-2xl border-2 ${STATUS_CONFIG[tempStatus].color} ${STATUS_CONFIG[tempStatus].border}`}>
+                              {(() => {
+                                  const Icon = STATUS_CONFIG[tempStatus].icon;
+                                  return <Icon size={32} className="mb-2" />;
+                              })()}
+                              <span className="text-lg font-bold">{STATUS_CONFIG[tempStatus].label}</span>
+                          </div>
+                      </div>
+
+                      <div className="flex gap-3">
+                          <button 
+                            onClick={() => setViewMode('update_status')} 
+                            className="flex-1 bg-gray-100 text-gray-700 py-3 rounded-xl font-semibold hover:bg-gray-200"
+                          >
+                            Voltar
+                          </button>
+                          <button 
+                            onClick={executarAtualizacaoStatus} 
+                            className="flex-1 bg-blue-600 text-white py-3 rounded-xl font-semibold hover:bg-blue-700 shadow-md shadow-blue-200"
+                          >
+                            Confirmar
+                          </button>
+                      </div>
+                  </div>
+              )}
+
+              {/* --- OUTRAS VIEWS (Edit, Reschedule, Cancel) --- */}
               {viewMode === 'edit' && (
                 <div className="space-y-4 animate-in slide-in-from-right-4 duration-300">
-                   
-                   <div>
-                        <label className="text-sm font-medium text-gray-700 mb-1 flex items-center gap-1"><Hash size={14} /> Nº Atendimento</label>
-                        <input type="text" className="w-full h-11 border border-gray-200 bg-gray-50 rounded-xl px-3 outline-none focus:bg-white focus:ring-2 focus:ring-blue-100 transition-all font-mono" value={editForm.numero_atendimento} onChange={e => handleNumeroAtendimentoEditChange(e.target.value)} maxLength={10} />
-                   </div>
-
-                   <div><label className="text-sm font-medium text-gray-700 mb-1 block">Nome do Paciente</label><input type="text" className="w-full h-11 border border-gray-200 bg-gray-50 rounded-xl px-3 outline-none focus:bg-white focus:ring-2 focus:ring-blue-100 transition-all" value={editForm.nome} onChange={e => setEditForm({...editForm, nome: e.target.value})} /></div>
-                   <div><label className="text-sm font-medium text-gray-700 mb-1 block">Telefone</label><input type="tel" placeholder="(xx) xxxxx-xxxx" className="w-full h-11 border border-gray-200 bg-gray-50 rounded-xl px-3 outline-none focus:bg-white focus:ring-2 focus:ring-blue-100 transition-all" value={editForm.telefone} onChange={e => handlePhoneEditChange(e.target.value)} maxLength={15} /></div>
-                   
-                   <div>
-                        <label className="text-sm font-medium text-gray-700 mb-1 block">Diagnóstico / Condutas</label>
-                        <textarea className="w-full border border-gray-200 bg-gray-50 rounded-xl p-3 outline-none focus:bg-white focus:ring-2 focus:ring-blue-100 transition-all text-sm" rows={3} value={editForm.diagnostico} onChange={e => setEditForm({...editForm, diagnostico: e.target.value})} />
-                   </div>
-
-                   <div>
-                        <label className="text-sm font-medium text-gray-700 mb-2 block">Procedimentos</label>
-                        <div className="flex flex-wrap gap-2">
-                            {OPCOES_PROCEDIMENTOS.map((proc) => {
-                                const isSelected = editForm.procedimentos.includes(proc);
-                                return (
-                                    <button
-                                        key={proc}
-                                        onClick={() => toggleProcedimentoEdit(proc)}
-                                        className={`
-                                            px-3 py-1.5 rounded-full text-xs font-semibold border transition-all flex items-center gap-1.5
-                                            ${isSelected 
-                                                ? 'bg-emerald-50 text-emerald-700 border-emerald-200 shadow-sm' 
-                                                : 'bg-white text-slate-500 border-slate-200 hover:border-slate-300 hover:bg-slate-50'
-                                            }
-                                        `}
-                                    >
-                                        <Activity size={14} className={isSelected ? 'text-emerald-500' : 'text-slate-400'} />
-                                        {proc}
-                                    </button>
-                                )
-                            })}
-                        </div>
-                   </div>
-
-                   <div className="flex gap-2 pt-2"><button onClick={() => setViewMode('details')} className="flex-1 bg-gray-100 text-gray-600 py-2 rounded-xl text-sm font-medium">Cancelar</button><button onClick={confirmarEdicao} className="flex-1 bg-blue-600 text-white py-2 rounded-xl text-sm hover:bg-blue-700 flex items-center justify-center gap-2 font-medium"><Save size={18} /> Salvar</button></div>
+                   <div><label className="text-sm font-medium text-gray-700 mb-1 flex items-center gap-1"><Hash size={14} /> Nº Atendimento</label><input type="text" className="w-full h-11 border border-gray-200 bg-gray-50 rounded-xl px-3 outline-none font-mono" value={editForm.numero_atendimento} onChange={e => handleNumeroAtendimentoEditChange(e.target.value)} maxLength={10} /></div>
+                   <div><label className="text-sm font-medium text-gray-700 mb-1 block">Nome do Paciente</label><input type="text" className="w-full h-11 border border-gray-200 bg-gray-50 rounded-xl px-3 outline-none" value={editForm.nome} onChange={e => setEditForm({...editForm, nome: e.target.value})} /></div>
+                   <div><label className="text-sm font-medium text-gray-700 mb-1 block">Telefone</label><input type="tel" className="w-full h-11 border border-gray-200 bg-gray-50 rounded-xl px-3 outline-none" value={editForm.telefone} onChange={e => handlePhoneEditChange(e.target.value)} maxLength={15} /></div>
+                   <div><label className="text-sm font-medium text-gray-700 mb-1 block">Diagnóstico / Condutas</label><textarea className="w-full border border-gray-200 bg-gray-50 rounded-xl p-3 outline-none text-sm" rows={3} value={editForm.diagnostico} onChange={e => setEditForm({...editForm, diagnostico: e.target.value})} /></div>
+                   <div><label className="text-sm font-medium text-gray-700 mb-2 block">Procedimentos</label><div className="flex flex-wrap gap-2">{OPCOES_PROCEDIMENTOS.map((proc) => {const isSelected = editForm.procedimentos.includes(proc); return (<button key={proc} onClick={() => toggleProcedimentoEdit(proc)} className={`px-3 py-1.5 rounded-full text-xs font-semibold border transition-all flex items-center gap-1.5 ${isSelected ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-white text-slate-500 border-slate-200'}`}><Activity size={14} /> {proc}</button>)})}</div></div>
+                   <div className="flex gap-2 pt-2"><button onClick={() => setViewMode('details')} className="flex-1 bg-gray-100 text-gray-600 py-2 rounded-xl text-sm font-medium">Cancelar</button><button onClick={confirmarEdicao} className="flex-1 bg-blue-600 text-white py-2 rounded-xl text-sm hover:bg-blue-700 font-medium">Salvar</button></div>
                 </div>
               )}
 
-              {/* --- REAGENDAMENTO --- */}
               {viewMode === 'reschedule' && (
                  <div className="space-y-6 animate-in slide-in-from-right-4 duration-300">
                     <div className="bg-orange-50 p-4 rounded-xl border border-orange-100"><p className="text-sm text-orange-800 text-center font-medium">Selecione a nova data e horário</p></div>
-                    
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                        <div>
-                            <label className="text-xs font-bold text-gray-500 uppercase mb-2 block">Nova Data</label>
-                            <div className="relative">
-                                <CalendarIcon className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none z-10" size={20} />
-                                <DatePicker
-                                    selected={reagendarDate}
-                                    onChange={(d: Date | null) => setReagendarDate(d)}
-                                    minDate={new Date()}
-                                    locale="pt-BR"
-                                    dateFormat="dd/MM/yyyy"
-                                    placeholderText="Selecione o dia"
-                                    popperPlacement="bottom-start"
-                                    className="custom-datepicker-input"
-                                    onFocus={(e) => e.target.blur()} 
-                                />
-                            </div>
-                        </div>
-
-                        <div>
-                            <label className="text-xs font-bold text-gray-500 uppercase mb-2 block">Novo Horário</label>
-                            {!reagendarDate ? (
-                                <div className="h-10 flex items-center text-gray-400 text-sm italic">Selecione uma data primeiro.</div>
-                            ) : (
-                                <div className="grid grid-cols-3 gap-2 max-h-48 overflow-y-auto pr-1">
-                                    {HORARIOS_FIXOS.map((horario) => {
-                                        const isDisabled = checkIsDisabled(horario);
-                                        const isSelected = reagendarTime && format(reagendarTime, 'HH:mm') === horario;
-
-                                        return (
-                                            <button
-                                                key={horario}
-                                                type="button"
-                                                disabled={isDisabled}
-                                                onClick={() => handleSelectRescheduleTime(horario)}
-                                                className={`
-                                                    py-1.5 px-1 rounded-md text-xs font-semibold border transition-all
-                                                    ${isDisabled 
-                                                        ? 'bg-slate-50 text-slate-300 border-slate-100 cursor-not-allowed decoration-slate-300' 
-                                                        : isSelected
-                                                            ? 'bg-blue-600 text-white border-blue-600 shadow-sm transform scale-105'
-                                                            : 'bg-white text-slate-600 border-slate-200 hover:border-blue-400 hover:text-blue-600 hover:shadow-sm'
-                                                    }
-                                                `}
-                                            >
-                                                {horario}
-                                            </button>
-                                        );
-                                    })}
-                                </div>
-                            )}
-                        </div>
+                        <div><label className="text-xs font-bold text-gray-500 uppercase mb-2 block">Nova Data</label><div className="relative"><CalendarIcon className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none z-10" size={20} /><DatePicker selected={reagendarDate} onChange={(d: Date | null) => setReagendarDate(d)} minDate={new Date()} locale="pt-BR" dateFormat="dd/MM/yyyy" placeholderText="Selecione o dia" popperPlacement="bottom-start" className="custom-datepicker-input" onFocus={(e) => e.target.blur()} /></div></div>
+                        <div><label className="text-xs font-bold text-gray-500 uppercase mb-2 block">Novo Horário</label>{!reagendarDate ? (<div className="h-10 flex items-center text-gray-400 text-sm italic">Selecione uma data primeiro.</div>) : (<div className="grid grid-cols-3 gap-2 max-h-48 overflow-y-auto pr-1">{HORARIOS_FIXOS.map((horario) => { const isDisabled = checkIsDisabled(horario); const isSelected = reagendarTime && format(reagendarTime, 'HH:mm') === horario; return (<button key={horario} type="button" disabled={isDisabled} onClick={() => handleSelectRescheduleTime(horario)} className={`py-1.5 px-1 rounded-md text-xs font-semibold border transition-all ${isDisabled ? 'bg-slate-50 text-slate-300 border-slate-100 cursor-not-allowed' : isSelected ? 'bg-blue-600 text-white border-blue-600 shadow-sm' : 'bg-white text-slate-600 border-slate-200 hover:border-blue-400 hover:text-blue-600'}`}>{horario}</button>);})}</div>)}</div>
                     </div>
-
-                    <div>
-                        <label className="text-xs font-bold text-gray-500 uppercase mb-1 block">Motivo</label>
-                        <textarea className="w-full border border-gray-200 bg-gray-50 rounded-xl p-3 outline-none focus:bg-white focus:ring-2 focus:ring-orange-100 focus:border-orange-300 transition-all text-sm placeholder:text-gray-400" rows={2} placeholder="Ex.: Paciente pediu para remarcar." value={reagendarMotivo} onChange={e => setReagendarMotivo(e.target.value)} />
-                    </div>
-
-                    <div className="flex gap-2 pt-2">
-                        <button onClick={() => setViewMode('details')} className="flex-1 bg-gray-100 text-gray-600 py-3 rounded-xl text-sm font-medium">Voltar</button>
-                        <button onClick={confirmarReagendamento} className="flex-1 bg-orange-600 text-white py-3 rounded-xl text-sm hover:bg-orange-700 font-medium">Confirmar</button>
-                    </div>
+                    <div><label className="text-xs font-bold text-gray-500 uppercase mb-1 block">Motivo</label><textarea className="w-full border border-gray-200 bg-gray-50 rounded-xl p-3 outline-none text-sm" rows={2} placeholder="Ex.: Paciente pediu para remarcar." value={reagendarMotivo} onChange={e => setReagendarMotivo(e.target.value)} /></div>
+                    <div className="flex gap-2 pt-2"><button onClick={() => setViewMode('details')} className="flex-1 bg-gray-100 text-gray-600 py-3 rounded-xl text-sm font-medium">Voltar</button><button onClick={confirmarReagendamento} className="flex-1 bg-orange-600 text-white py-3 rounded-xl text-sm hover:bg-orange-700 font-medium">Confirmar</button></div>
                  </div>
               )}
 
-              {(viewMode === 'confirm_cancel' || viewMode === 'confirm_conclude') && (
+              {viewMode === 'confirm_cancel' && (
                 <div className="text-center space-y-4 animate-in zoom-in-95 duration-200">
-                  <div className={`w-16 h-16 rounded-full flex items-center justify-center mx-auto ${viewMode === 'confirm_cancel' ? 'bg-red-100 text-red-600' : 'bg-green-100 text-green-600'}`}>
-                    {viewMode === 'confirm_cancel' ? <AlertCircle size={32} /> : <CheckCircle2 size={32} />}
-                  </div>
-                  <h3 className="text-xl font-bold text-gray-800">{viewMode === 'confirm_cancel' ? 'Tem certeza?' : 'Finalizar Atendimento?'}</h3>
-                  <p className="text-gray-500 text-sm">{viewMode === 'confirm_cancel' ? 'Você está prestes a cancelar este agendamento.' : 'O status será alterado para "Realizado".'}</p>
-                  <div className="flex gap-3 pt-2">
-                    <button onClick={() => setViewMode('details')} className="flex-1 bg-gray-100 text-gray-700 py-3 rounded-xl font-semibold hover:bg-gray-200">Voltar</button>
-                    <button onClick={() => executarAtualizacaoStatus(selectedAgendamento.id, viewMode === 'confirm_cancel' ? 'cancelado' : 'realizado')} className={`flex-1 text-white py-3 rounded-xl font-semibold ${viewMode === 'confirm_cancel' ? 'bg-red-600 hover:bg-red-700' : 'bg-green-600 hover:bg-green-700'}`}>
-                        {viewMode === 'confirm_cancel' ? 'Sim, Cancelar' : 'Confirmar'}
-                    </button>
-                  </div>
+                  <div className="w-16 h-16 rounded-full flex items-center justify-center mx-auto bg-red-100 text-red-600"><AlertCircle size={32} /></div>
+                  <h3 className="text-xl font-bold text-gray-800">Tem certeza?</h3>
+                  <p className="text-gray-500 text-sm">Você está prestes a cancelar este agendamento.</p>
+                  <div className="flex gap-3 pt-2"><button onClick={() => setViewMode('details')} className="flex-1 bg-gray-100 text-gray-700 py-3 rounded-xl font-semibold hover:bg-gray-200">Voltar</button><button onClick={() => { setTempStatus('cancelado'); executarAtualizacaoStatus(); }} className="flex-1 text-white py-3 rounded-xl font-semibold bg-red-600 hover:bg-red-700">Sim, Cancelar</button></div>
                 </div>
               )}
 

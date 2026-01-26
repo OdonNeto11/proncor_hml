@@ -1,5 +1,5 @@
 import React, { useState, FormEvent, useEffect } from 'react';
-import { Calendar, Clock, User, Phone, FileText, Upload, Paperclip, Trash2 } from 'lucide-react';
+import { Calendar, Clock, User, Phone, FileText, Upload, Paperclip, Trash2, Hash, Activity } from 'lucide-react';
 import DatePicker, { registerLocale } from 'react-datepicker';
 import { ptBR } from 'date-fns/locale';
 import "react-datepicker/dist/react-datepicker.css";
@@ -22,15 +22,20 @@ const HORARIOS_FIXOS = [
   "19:00", "19:30", "20:00", "20:30", "21:00"
 ];
 
+// LISTA DE PROCEDIMENTOS (CHECKBOXES)
+const OPCOES_PROCEDIMENTOS = ["Exames", "RX", "Tomografia"];
+
 export function Agendar() {
   const [selectedDate, setSelectedDate] = useState<Date | null>(new Date());
   const [selectedTime, setSelectedTime] = useState<Date | null>(null);
   const [bookedTimes, setBookedTimes] = useState<string[]>([]);
   
   const [formData, setFormData] = useState({
+    numero_atendimento: '', 
     nome_paciente: '',
     telefone_paciente: '',
     diagnostico: '',
+    procedimentos: [] as string[] 
   });
 
   const [arquivos, setArquivos] = useState<File[]>([]);
@@ -57,7 +62,6 @@ export function Agendar() {
         setBookedTimes(times);
       }
     };
-    // Reseta seleção ao mudar data
     setBookedTimes([]); 
     setSelectedTime(null);
     fetchBookedTimes();
@@ -65,19 +69,13 @@ export function Agendar() {
 
   // --- LÓGICA DE DISPONIBILIDADE ---
   const checkIsDisabled = (timeStr: string) => {
-    if (!selectedDate) return true; // Se não tem data, bloqueia tudo
-    
-    // 1. Verifica Banco de Dados
+    if (!selectedDate) return true;
     if (bookedTimes.includes(timeStr)) return true;
-    
-    // 2. Verifica Passado (Se for hoje)
     if (isSameDay(selectedDate, new Date())) {
       const [hora, minuto] = timeStr.split(':').map(Number);
       const dataHoraOpcao = new Date(selectedDate);
       dataHoraOpcao.setHours(hora, minuto, 0, 0);
-      
       const agora = new Date();
-      // Dá uma margem de 1 minuto
       if (dataHoraOpcao.getTime() < agora.getTime() - 60000) return true;
     }
     return false;
@@ -91,7 +89,17 @@ export function Agendar() {
     if(errors.hora_agendamento) setErrors({...errors, hora_agendamento: ''});
   };
 
-  // --- HANDLERS (Sem alterações) ---
+  // --- HANDLERS ---
+  
+  // NOVO: Handler específico para garantir APENAS NÚMEROS no Nº Atendimento
+  const handleNumeroAtendimentoChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    // Remove tudo que não for dígito (0-9)
+    const value = e.target.value.replace(/\D/g, ""); 
+    
+    setFormData(prev => ({ ...prev, numero_atendimento: value }));
+    if (errors.numero_atendimento) setErrors(prev => ({ ...prev, numero_atendimento: '' }));
+  };
+
   const handlePhoneChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     let value = e.target.value.replace(/\D/g, "").substring(0, 11);
     if (value.length > 10) value = value.replace(/^(\d{2})(\d{5})(\d{4})/, "($1) $2-$3");
@@ -106,6 +114,19 @@ export function Agendar() {
     const { name, value } = e.target;
     setFormData(prev => ({ ...prev, [name]: value }));
     if (errors[name]) setErrors(prev => ({ ...prev, [name]: '' }));
+  };
+
+  const toggleProcedimento = (opcao: string) => {
+    setFormData(prev => {
+        const jaExiste = prev.procedimentos.includes(opcao);
+        let novosProcedimentos;
+        if (jaExiste) {
+            novosProcedimentos = prev.procedimentos.filter(p => p !== opcao);
+        } else {
+            novosProcedimentos = [...prev.procedimentos, opcao];
+        }
+        return { ...prev, procedimentos: novosProcedimentos };
+    });
   };
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -133,9 +154,12 @@ export function Agendar() {
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
     setLoading(true);
+    
+    // Validação
     const novosErros: Record<string, string> = {};
     if (!selectedDate) novosErros.data_agendamento = 'Data obrigatória';
     if (!selectedTime) novosErros.hora_agendamento = 'Selecione um horário';
+    if (!formData.numero_atendimento) novosErros.numero_atendimento = 'Nº Atendimento obrigatório'; 
     if (!formData.nome_paciente) novosErros.nome_paciente = 'Nome obrigatório';
     if (!formData.telefone_paciente || formData.telefone_paciente.length < 14) novosErros.telefone_paciente = 'Telefone inválido';
     
@@ -162,15 +186,25 @@ export function Agendar() {
       const { error } = await supabase.from('agendamentos').insert([{
         data_agendamento: dataFormatada,
         hora_agendamento: horaFormatada,
+        numero_atendimento: formData.numero_atendimento, 
         nome_paciente: formData.nome_paciente,
         telefone_paciente: formData.telefone_paciente,
         diagnostico: formData.diagnostico,
+        procedimentos: formData.procedimentos,
         status: 'agendado',
         anexos: listaAnexos
       }]);
+      
       if (error) throw error;
+      
       setShowToast(true);
-      setFormData({ nome_paciente: '', telefone_paciente: '', diagnostico: '' });
+      setFormData({ 
+        numero_atendimento: '', 
+        nome_paciente: '', 
+        telefone_paciente: '', 
+        diagnostico: '', 
+        procedimentos: [] 
+      });
       setSelectedTime(null);
       setArquivos([]);
       setBookedTimes([...bookedTimes, horaFormatada]);
@@ -213,14 +247,13 @@ export function Agendar() {
                 {errors.data_agendamento && <span className="text-xs text-red-500 mt-1">{errors.data_agendamento}</span>}
             </div>
 
-            {/* 2. SELEÇÃO DE HORA (GRID / QUADRADINHOS) */}
+            {/* 2. SELEÇÃO DE HORA */}
             <div className="w-full">
                 <label className="text-sm font-semibold text-slate-700 mb-3 flex items-center gap-2">
                     2. Selecione o Horário <span className="text-red-500">*</span>
                     {selectedTime && <span className="text-xs font-normal text-blue-600 bg-blue-50 px-2 py-0.5 rounded-full">Selecionado: {format(selectedTime, 'HH:mm')}</span>}
                 </label>
                 
-                {/* O GRID MÁGICO */}
                 <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-3">
                     {HORARIOS_FIXOS.map((horario) => {
                         const isDisabled = checkIsDisabled(horario);
@@ -229,16 +262,16 @@ export function Agendar() {
                         return (
                             <button
                                 key={horario}
-                                type="button" // Importante para não submeter o form
+                                type="button"
                                 disabled={isDisabled}
                                 onClick={() => handleSelectTime(horario)}
                                 className={`
                                     py-2 px-1 rounded-lg text-sm font-semibold border transition-all duration-200
                                     ${isDisabled 
-                                        ? 'bg-slate-50 text-slate-300 border-slate-100 cursor-not-allowed decoration-slate-300' // Bloqueado
+                                        ? 'bg-slate-50 text-slate-300 border-slate-100 cursor-not-allowed decoration-slate-300'
                                         : isSelected
-                                            ? 'bg-blue-600 text-white border-blue-600 shadow-md transform scale-105' // Selecionado
-                                            : 'bg-white text-slate-600 border-slate-200 hover:border-blue-400 hover:text-blue-600 hover:shadow-sm' // Disponível
+                                            ? 'bg-blue-600 text-white border-blue-600 shadow-md transform scale-105'
+                                            : 'bg-white text-slate-600 border-slate-200 hover:border-blue-400 hover:text-blue-600 hover:shadow-sm'
                                     }
                                 `}
                             >
@@ -249,11 +282,6 @@ export function Agendar() {
                         );
                     })}
                 </div>
-                
-                {!selectedDate && (
-                    <p className="text-xs text-slate-400 mt-2 italic">Selecione uma data acima para ver a disponibilidade.</p>
-                )}
-                
                 {errors.hora_agendamento && <span className="text-xs text-red-500 mt-1 block">{errors.hora_agendamento}</span>}
             </div>
 
@@ -261,9 +289,58 @@ export function Agendar() {
 
           <div className="h-px bg-slate-100 my-2"></div>
 
+          {/* NOVO CAMPO: NÚMERO DO ATENDIMENTO (SÓ NÚMEROS) */}
+          <Input 
+             label="Número do Atendimento" 
+             name="numero_atendimento" 
+             value={formData.numero_atendimento} 
+             onChange={handleNumeroAtendimentoChange} // Handler exclusivo
+             required 
+             icon={<Hash size={20} />} 
+             error={errors.numero_atendimento}
+             placeholder="Somente números"
+             maxLength={10}
+          />
+
           <Input label="Nome do Paciente" name="nome_paciente" value={formData.nome_paciente} onChange={handleChange} required icon={<User size={20} />} error={errors.nome_paciente} />
           <Input label="Telefone / WhatsApp" name="telefone_paciente" value={formData.telefone_paciente} onChange={handlePhoneChange} required placeholder="(xx) xxxxx-xxxx" maxLength={15} icon={<Phone size={20} />} error={errors.telefone_paciente} />
-          <Textarea label="Diagnóstico / Motivo" name="diagnostico" value={formData.diagnostico} onChange={handleChange} rows={3} icon={<FileText size={20} />} />
+          
+          <div className="space-y-3">
+            <Textarea 
+                label="Diagnóstico / Condutas" 
+                name="diagnostico" 
+                value={formData.diagnostico} 
+                onChange={handleChange} 
+                rows={3} 
+                icon={<FileText size={20} />} 
+            />
+
+            <div className="pl-1">
+                <div className="flex flex-wrap gap-2">
+                    {OPCOES_PROCEDIMENTOS.map((proc) => {
+                        const isSelected = formData.procedimentos.includes(proc);
+                        return (
+                            <button
+                                key={proc}
+                                type="button"
+                                onClick={() => toggleProcedimento(proc)}
+                                className={`
+                                    px-3 py-1.5 rounded-full text-xs font-semibold border transition-all flex items-center gap-1.5
+                                    ${isSelected 
+                                        ? 'bg-emerald-50 text-emerald-700 border-emerald-200 shadow-sm' 
+                                        : 'bg-white text-slate-500 border-slate-200 hover:border-slate-300 hover:bg-slate-50'
+                                    }
+                                `}
+                            >
+                                <Activity size={14} className={isSelected ? 'text-emerald-500' : 'text-slate-400'} />
+                                {proc}
+                            </button>
+                        )
+                    })}
+                </div>
+                <p className="text-[10px] text-slate-400 mt-1.5 ml-1">Selecione os procedimentos adicionais, se houver.</p>
+            </div>
+          </div>
 
           <div className="w-full">
             <label className="text-sm font-semibold text-slate-700 mb-1.5 block">Anexos (Máx: 5)</label>

@@ -9,10 +9,10 @@ export function Home() {
     <div className="max-w-6xl mx-auto py-10">
       <div className="text-center mb-16">
         <h1 className="text-4xl md:text-5xl font-bold text-gray-800 mb-4">
-          Sistema de Teleconsultas e Retornos
+          Sistema de Teleconsultas
         </h1>
         <p className="text-xl text-gray-600">
-          Hospital Proncor - Gestão de Retornos Médicos
+          Agendamento de Teleconsultas e Retornos
         </p>
       </div>
 

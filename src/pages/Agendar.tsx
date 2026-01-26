@@ -1,4 +1,4 @@
-import React, { useState, FormEvent } from 'react';
+import React, { useState, FormEvent, useEffect } from 'react';
 import { Calendar, Clock, User, Phone, FileText, Upload, Paperclip, Trash2 } from 'lucide-react';
 import DatePicker, { registerLocale } from 'react-datepicker';
 import { ptBR } from 'date-fns/locale';
@@ -12,13 +12,13 @@ import { Card } from '../components/ui/Card';
 import { Toast } from '../components/ui/Toast';
 import { supabase } from '../lib/supabase';
 
-// Registro do idioma
 registerLocale('pt-BR', ptBR);
 
 export function Agendar() {
-  // Estados para o DatePicker (Tipagem explícita para evitar erro)
-  const [selectedDate, setSelectedDate] = useState<Date | null>(null);
+  const [selectedDate, setSelectedDate] = useState<Date | null>(new Date());
   const [selectedTime, setSelectedTime] = useState<Date | null>(null);
+  
+  const [bookedTimes, setBookedTimes] = useState<string[]>([]);
 
   const [formData, setFormData] = useState({
     nome_paciente: '',
@@ -31,14 +31,48 @@ export function Agendar() {
   const [showToast, setShowToast] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
 
-  // Filtra horários passados
-  const filterPassedTime = (time: Date) => {
-    const currentDate = new Date();
-    const selectedDateToCheck = new Date(time);
+  // --- 1. BUSCAR HORÁRIOS OCUPADOS (APENAS 'AGENDADO') ---
+  useEffect(() => {
+    const fetchBookedTimes = async () => {
+      if (!selectedDate) return;
 
+      const dateStr = format(selectedDate, 'yyyy-MM-dd');
+      
+      const { data, error } = await supabase
+        .from('agendamentos')
+        .select('hora_agendamento')
+        .eq('data_agendamento', dateStr)
+        .eq('status', 'agendado'); // <--- ALTERAÇÃO AQUI: Só bloqueia se estiver 'agendado'
+
+      if (error) {
+        console.error('Erro ao buscar horários:', error);
+        return;
+      }
+
+      if (data) {
+        const times = data.map(item => item.hora_agendamento);
+        setBookedTimes(times);
+      }
+    };
+
+    fetchBookedTimes();
+  }, [selectedDate]);
+
+  // --- 2. VALIDAR DISPONIBILIDADE ---
+  const isTimeAvailable = (time: Date) => {
+    const timeStr = format(time, 'HH:mm');
+    const currentDate = new Date();
+
+    // Regra 1: Horário passado (se for hoje)
     if (selectedDate && isSameDay(selectedDate, currentDate)) {
-      return selectedDateToCheck > currentDate;
+      if (time < currentDate) return false;
     }
+
+    // Regra 2: Horário já agendado
+    if (bookedTimes.includes(timeStr)) {
+      return false; 
+    }
+
     return true;
   };
 
@@ -90,6 +124,14 @@ export function Agendar() {
     if (!formData.nome_paciente) novosErros.nome_paciente = 'Nome obrigatório';
     if (!formData.telefone_paciente || formData.telefone_paciente.length < 14) novosErros.telefone_paciente = 'Telefone inválido';
     
+    // Validação extra de segurança
+    if (selectedTime) {
+        const timeStr = format(selectedTime, 'HH:mm');
+        if (bookedTimes.includes(timeStr)) {
+            novosErros.hora_agendamento = 'Este horário acabou de ser ocupado.';
+        }
+    }
+
     if (Object.keys(novosErros).length > 0) {
       setErrors(novosErros);
       setLoading(false);
@@ -120,9 +162,11 @@ export function Agendar() {
       
       setShowToast(true);
       setFormData({ nome_paciente: '', telefone_paciente: '', diagnostico: '' });
-      setSelectedDate(null);
+      setSelectedDate(new Date()); 
       setSelectedTime(null);
       setArquivos([]);
+      // Atualiza lista localmente para refletir o novo bloqueio
+      setBookedTimes([...bookedTimes, horaFormatada]);
     } catch (error: any) {
       alert('Erro: ' + error.message);
     } finally {
@@ -151,6 +195,7 @@ export function Agendar() {
                         selected={selectedDate}
                         onChange={(date: Date | null) => {
                            setSelectedDate(date);
+                           setSelectedTime(null); 
                            if(errors.data_agendamento) setErrors({...errors, data_agendamento: ''});
                         }}
                         minDate={new Date()}
@@ -164,7 +209,7 @@ export function Agendar() {
                 {errors.data_agendamento && <span className="text-xs text-red-500 mt-1">{errors.data_agendamento}</span>}
             </div>
 
-            {/* HORA */}
+            {/* HORA (Com intervalo de 30min e filtro de ocupados) */}
             <div className="w-full">
                 <label className="text-sm font-semibold text-slate-700 mb-1.5 block">Horário <span className="text-red-500">*</span></label>
                 <div className="relative">
@@ -177,12 +222,12 @@ export function Agendar() {
                         }}
                         showTimeSelect
                         showTimeSelectOnly
-                        timeIntervals={15}
+                        timeIntervals={30}
                         timeCaption="Hora"
                         dateFormat="HH:mm"
                         locale="pt-BR"
                         placeholderText="Selecione a hora"
-                        filterTime={filterPassedTime}
+                        filterTime={isTimeAvailable}
                         className={`custom-datepicker-input ${errors.hora_agendamento ? '!border-red-500' : ''}`}
                     />
                 </div>

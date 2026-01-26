@@ -3,7 +3,7 @@ import { Calendar, Clock, User, Phone, FileText, Upload, Paperclip, Trash2 } fro
 import DatePicker, { registerLocale } from 'react-datepicker';
 import { ptBR } from 'date-fns/locale';
 import "react-datepicker/dist/react-datepicker.css";
-import { format, isSameDay } from 'date-fns';
+import { format, isSameDay, setHours, setMinutes } from 'date-fns';
 
 import { Button } from '../components/ui/Button';
 import { Input } from '../components/ui/Input';
@@ -14,12 +14,19 @@ import { supabase } from '../lib/supabase';
 
 registerLocale('pt-BR', ptBR);
 
+// LISTA DE HORÁRIOS
+const HORARIOS_FIXOS = [
+  "07:30", "08:00", "08:30", "09:00",
+  "13:00", "13:30", "14:00", "14:30",
+  "15:00", "15:30", "16:00", "16:30", "17:30",
+  "19:00", "19:30", "20:00", "20:30", "21:00"
+];
+
 export function Agendar() {
   const [selectedDate, setSelectedDate] = useState<Date | null>(new Date());
   const [selectedTime, setSelectedTime] = useState<Date | null>(null);
-  
   const [bookedTimes, setBookedTimes] = useState<string[]>([]);
-
+  
   const [formData, setFormData] = useState({
     nome_paciente: '',
     telefone_paciente: '',
@@ -31,51 +38,60 @@ export function Agendar() {
   const [showToast, setShowToast] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
 
-  // --- 1. BUSCAR HORÁRIOS OCUPADOS (APENAS 'AGENDADO') ---
+  // --- BUSCA NO BANCO ---
   useEffect(() => {
     const fetchBookedTimes = async () => {
       if (!selectedDate) return;
-
       const dateStr = format(selectedDate, 'yyyy-MM-dd');
       
       const { data, error } = await supabase
         .from('agendamentos')
         .select('hora_agendamento')
         .eq('data_agendamento', dateStr)
-        .eq('status', 'agendado'); // <--- ALTERAÇÃO AQUI: Só bloqueia se estiver 'agendado'
+        .eq('status', 'agendado');
 
-      if (error) {
-        console.error('Erro ao buscar horários:', error);
-        return;
-      }
+      if (error) { console.error(error); return; }
 
       if (data) {
-        const times = data.map(item => item.hora_agendamento);
+        const times = data.map(item => item.hora_agendamento.substring(0, 5));
         setBookedTimes(times);
       }
     };
-
+    // Reseta seleção ao mudar data
+    setBookedTimes([]); 
+    setSelectedTime(null);
     fetchBookedTimes();
   }, [selectedDate]);
 
-  // --- 2. VALIDAR DISPONIBILIDADE ---
-  const isTimeAvailable = (time: Date) => {
-    const timeStr = format(time, 'HH:mm');
-    const currentDate = new Date();
-
-    // Regra 1: Horário passado (se for hoje)
-    if (selectedDate && isSameDay(selectedDate, currentDate)) {
-      if (time < currentDate) return false;
+  // --- LÓGICA DE DISPONIBILIDADE ---
+  const checkIsDisabled = (timeStr: string) => {
+    if (!selectedDate) return true; // Se não tem data, bloqueia tudo
+    
+    // 1. Verifica Banco de Dados
+    if (bookedTimes.includes(timeStr)) return true;
+    
+    // 2. Verifica Passado (Se for hoje)
+    if (isSameDay(selectedDate, new Date())) {
+      const [hora, minuto] = timeStr.split(':').map(Number);
+      const dataHoraOpcao = new Date(selectedDate);
+      dataHoraOpcao.setHours(hora, minuto, 0, 0);
+      
+      const agora = new Date();
+      // Dá uma margem de 1 minuto
+      if (dataHoraOpcao.getTime() < agora.getTime() - 60000) return true;
     }
-
-    // Regra 2: Horário já agendado
-    if (bookedTimes.includes(timeStr)) {
-      return false; 
-    }
-
-    return true;
+    return false;
   };
 
+  const handleSelectTime = (timeStr: string) => {
+    if (!selectedDate) return;
+    const [h, m] = timeStr.split(':').map(Number);
+    const newTime = setHours(setMinutes(new Date(selectedDate), m), h);
+    setSelectedTime(newTime);
+    if(errors.hora_agendamento) setErrors({...errors, hora_agendamento: ''});
+  };
+
+  // --- HANDLERS (Sem alterações) ---
   const handlePhoneChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     let value = e.target.value.replace(/\D/g, "").substring(0, 11);
     if (value.length > 10) value = value.replace(/^(\d{2})(\d{5})(\d{4})/, "($1) $2-$3");
@@ -117,25 +133,21 @@ export function Agendar() {
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
     setLoading(true);
-    
     const novosErros: Record<string, string> = {};
     if (!selectedDate) novosErros.data_agendamento = 'Data obrigatória';
-    if (!selectedTime) novosErros.hora_agendamento = 'Hora obrigatória';
+    if (!selectedTime) novosErros.hora_agendamento = 'Selecione um horário';
     if (!formData.nome_paciente) novosErros.nome_paciente = 'Nome obrigatório';
     if (!formData.telefone_paciente || formData.telefone_paciente.length < 14) novosErros.telefone_paciente = 'Telefone inválido';
     
-    // Validação extra de segurança
     if (selectedTime) {
-        const timeStr = format(selectedTime, 'HH:mm');
-        if (bookedTimes.includes(timeStr)) {
-            novosErros.hora_agendamento = 'Este horário acabou de ser ocupado.';
-        }
+      const timeStr = format(selectedTime, 'HH:mm');
+      if (bookedTimes.includes(timeStr)) {
+        novosErros.hora_agendamento = 'Este horário acabou de ser ocupado.';
+      }
     }
 
     if (Object.keys(novosErros).length > 0) {
-      setErrors(novosErros);
-      setLoading(false);
-      return;
+      setErrors(novosErros); setLoading(false); return;
     }
 
     try {
@@ -144,7 +156,6 @@ export function Agendar() {
         const uploads = await Promise.all(arquivos.map(file => uploadArquivoUnico(file)));
         listaAnexos.push(...uploads);
       }
-
       const dataFormatada = selectedDate ? format(selectedDate, 'yyyy-MM-dd') : '';
       const horaFormatada = selectedTime ? format(selectedTime, 'HH:mm') : '';
 
@@ -157,21 +168,13 @@ export function Agendar() {
         status: 'agendado',
         anexos: listaAnexos
       }]);
-      
       if (error) throw error;
-      
       setShowToast(true);
       setFormData({ nome_paciente: '', telefone_paciente: '', diagnostico: '' });
-      setSelectedDate(new Date()); 
       setSelectedTime(null);
       setArquivos([]);
-      // Atualiza lista localmente para refletir o novo bloqueio
       setBookedTimes([...bookedTimes, horaFormatada]);
-    } catch (error: any) {
-      alert('Erro: ' + error.message);
-    } finally {
-      setLoading(false);
-    }
+    } catch (error: any) { alert('Erro: ' + error.message); } finally { setLoading(false); }
   };
 
   return (
@@ -184,12 +187,12 @@ export function Agendar() {
       <Card>
         <form onSubmit={handleSubmit} className="space-y-6 p-6">
           
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <div className="flex flex-col gap-6">
             
-            {/* DATA */}
+            {/* 1. SELEÇÃO DE DATA */}
             <div className="w-full">
-                <label className="text-sm font-semibold text-slate-700 mb-1.5 block">Data <span className="text-red-500">*</span></label>
-                <div className="relative">
+                <label className="text-sm font-semibold text-slate-700 mb-2 block">1. Selecione a Data <span className="text-red-500">*</span></label>
+                <div className="relative max-w-sm">
                     <div className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none z-10"><Calendar size={20} /></div>
                     <DatePicker
                         selected={selectedDate}
@@ -202,6 +205,7 @@ export function Agendar() {
                         locale="pt-BR"
                         dateFormat="dd/MM/yyyy"
                         placeholderText="Selecione o dia"
+                        popperPlacement="bottom-start"
                         className={`custom-datepicker-input ${errors.data_agendamento ? '!border-red-500' : ''}`}
                         onFocus={(e) => e.target.blur()}
                     />
@@ -209,33 +213,55 @@ export function Agendar() {
                 {errors.data_agendamento && <span className="text-xs text-red-500 mt-1">{errors.data_agendamento}</span>}
             </div>
 
-            {/* HORA (Com intervalo de 30min e filtro de ocupados) */}
+            {/* 2. SELEÇÃO DE HORA (GRID / QUADRADINHOS) */}
             <div className="w-full">
-                <label className="text-sm font-semibold text-slate-700 mb-1.5 block">Horário <span className="text-red-500">*</span></label>
-                <div className="relative">
-                    <div className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none z-10"><Clock size={20} /></div>
-                    <DatePicker
-                        selected={selectedTime}
-                        onChange={(time: Date | null) => {
-                            setSelectedTime(time);
-                            if(errors.hora_agendamento) setErrors({...errors, hora_agendamento: ''});
-                        }}
-                        showTimeSelect
-                        showTimeSelectOnly
-                        timeIntervals={30}
-                        timeCaption="Hora"
-                        dateFormat="HH:mm"
-                        locale="pt-BR"
-                        placeholderText="Selecione a hora"
-                        filterTime={isTimeAvailable}
-                        className={`custom-datepicker-input ${errors.hora_agendamento ? '!border-red-500' : ''}`}
-                    />
+                <label className="text-sm font-semibold text-slate-700 mb-3 flex items-center gap-2">
+                    2. Selecione o Horário <span className="text-red-500">*</span>
+                    {selectedTime && <span className="text-xs font-normal text-blue-600 bg-blue-50 px-2 py-0.5 rounded-full">Selecionado: {format(selectedTime, 'HH:mm')}</span>}
+                </label>
+                
+                {/* O GRID MÁGICO */}
+                <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-3">
+                    {HORARIOS_FIXOS.map((horario) => {
+                        const isDisabled = checkIsDisabled(horario);
+                        const isSelected = selectedTime && format(selectedTime, 'HH:mm') === horario;
+
+                        return (
+                            <button
+                                key={horario}
+                                type="button" // Importante para não submeter o form
+                                disabled={isDisabled}
+                                onClick={() => handleSelectTime(horario)}
+                                className={`
+                                    py-2 px-1 rounded-lg text-sm font-semibold border transition-all duration-200
+                                    ${isDisabled 
+                                        ? 'bg-slate-50 text-slate-300 border-slate-100 cursor-not-allowed decoration-slate-300' // Bloqueado
+                                        : isSelected
+                                            ? 'bg-blue-600 text-white border-blue-600 shadow-md transform scale-105' // Selecionado
+                                            : 'bg-white text-slate-600 border-slate-200 hover:border-blue-400 hover:text-blue-600 hover:shadow-sm' // Disponível
+                                    }
+                                `}
+                            >
+                                <div className="flex items-center justify-center gap-1">
+                                    {horario}
+                                </div>
+                            </button>
+                        );
+                    })}
                 </div>
-                {errors.hora_agendamento && <span className="text-xs text-red-500 mt-1">{errors.hora_agendamento}</span>}
+                
+                {!selectedDate && (
+                    <p className="text-xs text-slate-400 mt-2 italic">Selecione uma data acima para ver a disponibilidade.</p>
+                )}
+                
+                {errors.hora_agendamento && <span className="text-xs text-red-500 mt-1 block">{errors.hora_agendamento}</span>}
             </div>
+
           </div>
 
-          <Input label="Paciente" name="nome_paciente" value={formData.nome_paciente} onChange={handleChange} required icon={<User size={20} />} error={errors.nome_paciente} />
+          <div className="h-px bg-slate-100 my-2"></div>
+
+          <Input label="Nome do Paciente" name="nome_paciente" value={formData.nome_paciente} onChange={handleChange} required icon={<User size={20} />} error={errors.nome_paciente} />
           <Input label="Telefone / WhatsApp" name="telefone_paciente" value={formData.telefone_paciente} onChange={handlePhoneChange} required placeholder="(xx) xxxxx-xxxx" maxLength={15} icon={<Phone size={20} />} error={errors.telefone_paciente} />
           <Textarea label="Diagnóstico / Motivo" name="diagnostico" value={formData.diagnostico} onChange={handleChange} rows={3} icon={<FileText size={20} />} />
 
@@ -250,26 +276,26 @@ export function Agendar() {
                </div>
             </div>
             {arquivos.length > 0 && (
-              <div className="mt-3 space-y-2">
-                {arquivos.map((arq, index) => (
-                  <div key={index} className="flex items-center justify-between p-3 bg-white border border-slate-200 rounded-lg shadow-sm animate-in fade-in slide-in-from-top-1">
-                    <div className="flex items-center gap-2 overflow-hidden">
-                      <Paperclip size={16} className="text-blue-600 flex-shrink-0" />
-                      <span className="text-sm text-slate-700 truncate">{arq.name}</span>
+                <div className="mt-3 space-y-2">
+                    {arquivos.map((arq, index) => (
+                    <div key={index} className="flex items-center justify-between p-3 bg-white border border-slate-200 rounded-lg shadow-sm">
+                        <div className="flex items-center gap-2 overflow-hidden">
+                        <Paperclip size={16} className="text-blue-600 flex-shrink-0" />
+                        <span className="text-sm text-slate-700 truncate">{arq.name}</span>
+                        </div>
+                        <button type="button" onClick={() => removerArquivo(index)} className="p-1 hover:bg-red-50 text-slate-400 hover:text-red-500 rounded transition-colors"><Trash2 size={16} /></button>
                     </div>
-                    <button type="button" onClick={() => removerArquivo(index)} className="p-1 hover:bg-red-50 text-slate-400 hover:text-red-500 rounded transition-colors"><Trash2 size={16} /></button>
-                  </div>
-                ))}
-              </div>
+                    ))}
+                </div>
             )}
           </div>
 
           <Button type="submit" disabled={loading} fullWidth>
-            {loading ? 'Salvando...' : 'Salvar Agendamento'}
+            {loading ? 'Confirmar Agendamento' : 'Confirmar Agendamento'}
           </Button>
         </form>
       </Card>
-      {showToast && <Toast message="Salvo com sucesso!" onClose={() => setShowToast(false)} />}
+      {showToast && <Toast message="Agendamento realizado com sucesso!" onClose={() => setShowToast(false)} />}
     </div>
   );
 }

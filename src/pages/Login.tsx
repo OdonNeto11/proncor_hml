@@ -1,12 +1,13 @@
 import { useState, FormEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
-import { Lock, Mail, Loader2 } from 'lucide-react'; // Removi o Stethoscope que não vamos mais usar
-import { Toast } from '../components/ui/Toast'; // Mantenha se estiver usando
+import { Lock, User, Loader2 } from 'lucide-react'; // Troquei Mail por User
 
 export function Login() {
   const navigate = useNavigate();
-  const [email, setEmail] = useState('');
+  
+  // Renomeei para loginInput pois pode receber tanto email quanto usuário
+  const [loginInput, setLoginInput] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
@@ -16,13 +17,23 @@ export function Login() {
     setLoading(true);
     setErrorMsg('');
 
+    // --- LÓGICA DO EMAIL FANTASMA ---
+    // Remove espaços em branco extras
+    let emailParaEnviar = loginInput.trim();
+
+    // Se NÃO tiver @, assumimos que é um usuário interno (ex: plantonista)
+    // e adicionamos o sufixo configurado no Supabase
+    if (!emailParaEnviar.includes('@')) {
+      emailParaEnviar = `${emailParaEnviar}@proncor.com.br`;
+    }
+
     const { error } = await supabase.auth.signInWithPassword({
-      email,
+      email: emailParaEnviar,
       password,
     });
 
     if (error) {
-      setErrorMsg('Email ou senha incorretos.');
+      setErrorMsg('Usuário ou senha incorretos.');
       setLoading(false);
     } else {
       navigate('/');
@@ -34,7 +45,6 @@ export function Login() {
       <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-8 border border-slate-100">
         
         <div className="text-center mb-8">
-          {/* AQUI ESTÁ A MUDANÇA: Logo do Proncor */}
           <img 
             src="/logo.png" 
             alt="Hospital Proncor" 
@@ -47,15 +57,19 @@ export function Login() {
 
         <form onSubmit={handleLogin} className="space-y-5">
           <div>
-            <label className="block text-sm font-medium text-slate-700 mb-1.5">Email</label>
+            {/* Label Atualizada */}
+            <label className="block text-sm font-medium text-slate-700 mb-1.5">
+              Usuário ou Email
+            </label>
             <div className="relative">
-              <Mail className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={20} />
+              {/* Ícone de Usuário */}
+              <User className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={20} />
               <input 
-                type="email" 
-                value={email}
-                onChange={e => setEmail(e.target.value)}
+                type="text"  // MUDANÇA IMPORTANTE: type="text" para aceitar nomes sem @
+                value={loginInput}
+                onChange={e => setLoginInput(e.target.value)}
                 className="w-full h-12 pl-10 pr-3 rounded-xl border border-slate-200 focus:ring-2 focus:ring-blue-100 focus:border-blue-400 outline-none transition-all"
-                placeholder="seu@email.com"
+                placeholder="Ex: plantonista ou seu@email.com"
                 required
               />
             </div>
